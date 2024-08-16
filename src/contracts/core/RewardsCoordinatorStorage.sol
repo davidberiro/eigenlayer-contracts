@@ -103,7 +103,7 @@ abstract contract RewardsCoordinatorStorage is IRewardsCoordinator {
     /// @notice Mapping: avs => rewardsSubmissionHash => bool to check if operatorSet rewards submission hash has been submitted
     mapping(address => mapping(bytes32 => bool)) isOperatorSetRewardsSubmissionHash;
 
-    /// @notice Mapping: operator => avs => operatorSetId => OperatorCommissionUpdate history
+    /// @notice Mapping: operator => avs => operatorSetId => RewardType => OperatorCommissionUpdate history
     mapping(address => mapping(address => mapping(uint32 => mapping(RewardType => OperatorCommissionUpdate[])))) public
         operatorCommissionUpdates;
 

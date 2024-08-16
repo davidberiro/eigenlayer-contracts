@@ -55,7 +55,7 @@ contract AVSDirectory is
 
     /**
      * @dev Initializes the addresses of the initial owner, pauser registry, and paused status.
-     * minWithdrawalDelayBlocks is set only once here
+     * TODO REMOVE minWithdrawalDelayBlocks is set only once here
      */
     function initialize(
         address initialOwner,
