@@ -91,6 +91,11 @@ contract AVSDirectoryMock is IAVSDirectory, Test {
 
     function getTotalMagnitudesAtTimestamp(address operator, IStrategy[] calldata strategies, uint32 timestamp) external view returns (uint64[] memory) {}
 
+    function getTotalMagnitude(
+        address operator,
+        IStrategy strategy
+    ) external view returns (uint64) {}
+
     function calculateOperatorAVSRegistrationDigestHash(
         address operator,
         address avs,

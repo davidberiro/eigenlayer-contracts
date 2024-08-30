@@ -1034,6 +1034,18 @@ contract AVSDirectory is
         return totalMagnitudes;
     }
 
+    /// TODO natspec
+    function getTotalMagnitude(
+        address operator,
+        IStrategy strategy
+    ) external view returns (uint64) {
+        (bool exists, uint32 key, uint224 value) = _totalMagnitudeUpdate[operator][strategy].latestCheckpoint();
+        if (!exists) {
+            return ShareScalingLib.INITIAL_TOTAL_MAGNITUDE;
+        }
+        return uint64(value);
+    }
+
     // /**
     //  * @notice fetches the minimum slashable shares for a certain operator and operatorSet for a list of strategies
     //  * from the current timestamp until the given timestamp

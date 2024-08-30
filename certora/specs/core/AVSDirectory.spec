@@ -12,13 +12,46 @@ methods {
     function isOperatorSetAVS(address) external returns (bool) envfree;
     function isMember(address, IAVSDirectory.OperatorSet operatorSet) external returns (bool) envfree;
     function isOperatorSet(address, uint32) external returns (bool) envfree;
+    function freeMagnitude(address, address) external returns (uint64) envfree;
+    function getTotalMagnitude(address operator, address strategy) external returns (uint64) envfree;
 }
+
+/**
+
+Properties to verify:
+
+1. sorted magnitude updates in ascending order
+/// @notice Mapping: operator => strategy => avs => operatorSetId => checkpointed magnitude
+mapping(address => mapping(IStrategy => mapping(address => mapping(uint32 => Checkpoints.History)))) internal
+    _magnitudeUpdate;
+_magnitudeUpdate stores checkpointed timestamped values of magnitudes allocated to a (op, opSet, Strategy) key mapping. Allocations being “backed” means that any allocations must be ≤ the current nonslashableMagnitude - sum(all pending allocations). This exact value is stored in the contract in the freeMagnitude mapping.
+Note that any checkpointed values in the future are a result of “backed” allocations. Therefore, magnitude updates from current timestamp and until the end MUST be sorted in ascending order by magnitude allocation values.
+2. _totalMagnitudeUpdate is monotonically decreasing
+For each (op, Strategy) tuple, an operator’s totalMagnitude checkpointed history MUST be strictly decreasing over time. This is because it is only decremented in slashOperator and never incremented in the contract. Ex. array values in storage [1e30, 1e29, 1e28]
+3. freeMagnitude lies in totalMagnitude range
+Whatever bound/init starting value we have for totalMagnitude (TBD some large number for precision), for all mapping values in freeMagnitude .
+freeMagnitude x∈[0,INIT_TOTAL_MAGNITUDE]. Note could be stricter and is actually bounded by current totalMagnitude. We can first prove the bound of INITIAL_TOTAL_MAGNITUDE instead however.
+4. _nextPendingFreeMagnitudeIndex
+For given key mapping (op, Strategy), _nextPendingFreeMagnitudeIndex[operator][strategy] ≤ _pendingFreeMagnitude[operator][strategy].length Self-explanatory, the _nextPendingFreeMagnitudeIndex points to the next index to complete/free in the pendingFreeMagnitude list.
+5. Checkpoints’ timestamps are monotonically increasing. That is, all checkpointed values are sorted in ascending chronological order.
+6. No duplicate operatorSets can be passed into modifyAllocations with a non-reverting function pass.
+
+*/
 
 rule sanity(env e, method f) {
     calldataarg args;
     f(e, args);
     satisfy true;
 }
+
+/// STATUS 
+/// freeMagnitude is in [0, current totalMagnitude]
+invariant freeMagnitudeIsBounded(address operator, address strategy)
+    freeMagnitude(operator, strategy) <= getTotalMagnitude(operator, strategy);
+
+invariant sortedTimestampCheckpoints(address operator, address strategy, bytes32 opSet, uint256 i, uint256 j)
+    i < j && j < currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints.length
+        => currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key < currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[j]._key;
 
 // STATUS - verified (https://prover.certora.com/output/3106/f736f7a96f314757b62cfd2cdc242b74/?anonymousKey=c8e394ffc0a5883ed540e36417c25e71c0d81e33)
 // isOperatorSetAVS[msg.sender] can never turn false

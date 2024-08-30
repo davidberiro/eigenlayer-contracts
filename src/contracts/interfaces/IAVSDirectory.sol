@@ -342,6 +342,12 @@ interface IAVSDirectory is ISignatureUtils {
         uint32 timestamp
     ) external view returns (uint64[] memory);
 
+    /// TODO: natspec
+    function getTotalMagnitude(
+        address operator,
+        IStrategy strategy
+    ) external view returns (uint64);
+
     function operatorSaltIsSpent(address operator, bytes32 salt) external view returns (bool);
 
     function isMember(address operator, OperatorSet memory operatorSet) external view returns (bool);
