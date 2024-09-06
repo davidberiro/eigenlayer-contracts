@@ -61,12 +61,15 @@ invariant sortedTimestampCheckpoints(address operator, address strategy, bytes32
         => currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key < currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[j]._key;
 
 /// STATUS pending
+/// Any pushed value in the checkpoints array should never have its key (timestamp) be modified
+/// Could be thought of as any nonzero key value in the checkpoints must be immutable and unchanged
+/// we assume storage out of bounds of the checkpoints array length are all default to 0 values
 rule checkpointTimestampsImmutable(env e, method f, address operator, address strategy, bytes32 opSet, uint256 i) {
     uint32 keyBefore = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key;
     uint256 length = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints.length;
 
-    // require is to make sure that existing storage is set to default 0 values
-    require length == 0 => keyBefore == 0;
+    // require is to make sure that storage outside of array bounds is set to default 0 values
+    require i >= length => keyBefore == 0;
 
     calldataarg args;
     f(e, args);
