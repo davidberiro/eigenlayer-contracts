@@ -44,14 +44,59 @@ rule sanity(env e, method f) {
     satisfy true;
 }
 
-/// STATUS 
+/// STATUS violated
 /// freeMagnitude is in [0, current totalMagnitude]
 invariant freeMagnitudeIsBounded(address operator, address strategy)
-    freeMagnitude(operator, strategy) <= getTotalMagnitude(operator, strategy);
+    freeMagnitude(operator, strategy) <= getTotalMagnitude(operator, strategy)
+    {
+        preserved {
+            // forcing no pending deallocations
+            require getTotalMagnitude(operator, strategy) == 0 => currentContract._pendingFreeMagnitude[operator][strategy].length == 0;
+        }
+    }
 
+/// STATUS violated
 invariant sortedTimestampCheckpoints(address operator, address strategy, bytes32 opSet, uint256 i, uint256 j)
     i < j && j < currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints.length
         => currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key < currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[j]._key;
+
+/// STATUS pending
+rule checkpointTimestampsImmutable(env e, method f, address operator, address strategy, bytes32 opSet, uint256 i) {
+    uint32 keyBefore = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key;
+    uint256 length = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints.length;
+
+    // require is to make sure that existing storage is set to default 0 values
+    require length == 0 => keyBefore == 0;
+
+    calldataarg args;
+    f(e, args);
+
+    uint32 keyAfter = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key;
+
+    assert keyBefore != 0 => keyBefore == keyAfter;
+}
+
+/// STATUS pending
+/// note likely depends on some form of invariant of checkpointTimestampsImmutable
+rule sortedTimestampCheckpointsRule(env e, method f, address operator, address strategy, bytes32 opSet, uint256 i, uint256 j) {
+    uint256 lengthBefore = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints.length;
+    uint32 ikeyBefore = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key;
+    uint32 jkeyBefore = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[j]._key;
+
+    require j < lengthBefore;
+    require i < j => ikeyBefore < jkeyBefore;
+
+    calldataarg args;
+    f(e, args);
+
+    uint256 lengthAfter = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints.length;
+    uint32 ikeyAfter = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[i]._key;
+    uint32 jkeyAfter = currentContract._magnitudeUpdate[operator][strategy][opSet]._checkpoints[j]._key;
+
+    assert i < j && j < lengthAfter => ikeyAfter < jkeyAfter;
+}
+
+
 
 // STATUS - verified (https://prover.certora.com/output/3106/f736f7a96f314757b62cfd2cdc242b74/?anonymousKey=c8e394ffc0a5883ed540e36417c25e71c0d81e33)
 // isOperatorSetAVS[msg.sender] can never turn false
