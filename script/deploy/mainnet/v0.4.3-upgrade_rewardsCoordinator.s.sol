@@ -40,10 +40,19 @@ contract Upgrade_Mainnet_RewardsCoordinator is ExistingDeploymentParser, Timeloc
         if (chainId != 1) {
             revert("Chain not supported");
         }
-        
+    
+        // 1. Deploy Rewards Coordinator
+        deployRewardsCoordinator();
+
+        emit log_named_address("New Rewards Coordinator Implementation", address(rewardsCoordinatorImplementation));
+
+        // 2. Create upgrade txs via Operations Multisig to Timelock
+        queueRewardsCoordinatorUpgradeAndOwnerChange();
+    }
+
+    function deployRewardsCoordinator() public {
         RewardsCoordinator oldRewardsCoordinator = rewardsCoordinatorImplementation;
 
-        // Deploy Rewards Coordinator
         vm.startBroadcast();
         rewardsCoordinatorImplementation = new RewardsCoordinator(
             delegationManager,
@@ -57,9 +66,9 @@ contract Upgrade_Mainnet_RewardsCoordinator is ExistingDeploymentParser, Timeloc
         vm.stopBroadcast();
 
         _sanityCheckImplementations(oldRewardsCoordinator, rewardsCoordinatorImplementation);
+    }
 
-        emit log_named_address("Rewards Coordinator Implementation", address(rewardsCoordinatorImplementation));
-
+    function queueRewardsCoordinatorUpgradeAndOwnerChange() public {
         // Create Upgrade Txs via Operations Multisig to Timelock to:
         // 1. Upgrade RewardsCoordinator
         // 2. Set owner of RewardsCoordinator to OperationsMultisig
