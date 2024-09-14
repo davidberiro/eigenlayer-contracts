@@ -33,7 +33,7 @@ contract Upgrade_Mainnet_RewardsCoordinator is ExistingDeploymentParser, Timeloc
         _;
     }
 
-    function run() public parseState {
+    function run() virtual public parseState {
         uint256 chainId = block.chainid;
         emit log_named_uint("You are deploying on ChainID", chainId);
 
