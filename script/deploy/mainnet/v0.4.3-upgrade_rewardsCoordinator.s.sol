@@ -17,7 +17,7 @@ contract Upgrade_Mainnet_RewardsCoordinator is ExistingDeploymentParser, Timeloc
 
     // CALLDATA FOR CALL TO TIMELOCK
     // TUESDAY, SEPTEMBER 27 2024 22:00:00 GMT (6pm EST/3pm PST)
-    uint256 timelockEta = 1727463600;
+    uint256 timelockEta = 1727474400;
 
     uint256 dayToQueueAction = 1726610400;
 
