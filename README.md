@@ -56,7 +56,6 @@ This will:
 * Install foundry and its tools
 * Install abigen
 
-
 ### Running Fork Tests
 
 We have a few fork tests against ETH mainnet. Passing these requires the environment variable `RPC_MAINNET` to be set. See `.env.example` for an example. Once you've set up your environment, `forge test` should show these fork tests passing.
