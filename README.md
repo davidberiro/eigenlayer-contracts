@@ -51,6 +51,7 @@ To set up this repo for the first time, run:
 make deps
 ```
 
+
 This will:
 * Install the pre-commit hook
 * Install foundry and its tools
