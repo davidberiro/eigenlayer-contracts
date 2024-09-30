@@ -309,14 +309,10 @@ contract AllocationManager is
             );
 
             bytes32 operatorSetKey = _encodeOperatorSet(allocation.operatorSets[i]);
-            // prep magnitudeUpdates in storage
 
             // Check that there is no pending allocation or deallocation
-            (bool hasPendingAllocationOrDeallocation) =
-                _hasPendingAllocationOrDeallocation(operator, allocation.strategy, operatorSetKey);
-
             require(
-                !hasPendingAllocationOrDeallocation
+                !_hasPendingAllocationOrDeallocation(operator, allocation.strategy, operatorSetKey)
                 PendingAllocationOrDeallocation()
             );
 
@@ -332,13 +328,14 @@ contract AllocationManager is
                 // Newly configured magnitude is less than current value.
                 // Therefore we handle this as a deallocation
 
-                // Note: MAX_PENDING_UPDATES == 1, so we do not have to decrement any allocations
-
-                // 1. push PendingFreeMagnitude and respective array index into (op,opSet,Strategy) queued deallocations
+                // 1. Get the magnitude to deallocate and push to PendingFreeMagnitude
                 uint64 magnitudeToDeallocate = uint64(currentMagnitude) - allocation.magnitudes[i];
-                _queuedDeallocationIndices[operator][allocation.strategy][operatorSetKey].push(
-                    _pendingFreeMagnitude[operator][allocation.strategy].length
-                );
+
+                _pendingMagnitudeUpdate[operator][allocation.strategy][operatorSetKey].push({
+                    key: deallocationCompletableTimestamp,
+                    value: allocation.magnitudes[i]
+                });
+
                 _pendingFreeMagnitude[operator][allocation.strategy].push(
                     PendingFreeMagnitude({
                         magnitudeDiff: magnitudeToDeallocate,
@@ -348,21 +345,28 @@ contract AllocationManager is
 
                 // 2. decrement allocated magnitude
                 // TODO: don't need to decrement since can have at most 1 pending allocation/deallocation
-                magnitudeUpdates.decrementAtAndFutureSnapshots({
-                    key: uint32(block.timestamp),
-                    decrementValue: magnitudeToDeallocate
-                });
+                // magnitudeUpdates.decrementAtAndFutureSnapshots({
+                //     key: uint32(block.timestamp),
+                //     decrementValue: magnitudeToDeallocate
+                // });
             } else if (allocation.magnitudes[i] > uint64(currentMagnitude)) {
                 // Newly configured magnitude is greater than current value.
                 // Therefore we handle this as an allocation
 
-                // 1. decrement free magnitude by incremented amount
+                // 1. Get the magnitude to allocate and push PendingMagnitudeUpdate
                 uint64 magnitudeToAllocate = allocation.magnitudes[i] - uint64(currentMagnitude);
+
+                _pendingMagnitudeUpdate[operator][allocation.strategy][operatorSetKey].push({
+                    key: allocationEffectTimestamp,
+                    value: allocation.magnitudes[i]
+                });
+
+                // 2. decrement free magnitude by incremented amount
                 OperatorMagnitudeInfo storage info = operatorMagnitudeInfo[operator][allocation.strategy];
                 require(info.freeMagnitude >= magnitudeToAllocate, InsufficientAllocatableMagnitude());
                 info.freeMagnitude -= magnitudeToAllocate;
 
-                // 2. allocate magnitude which will take effect 
+                // 3. allocate magnitude which will take effect 
                 magnitudeUpdates.push({key: allocationEffectTimestamp, value: allocation.magnitudes[i]});
             }
         }
@@ -391,31 +395,29 @@ contract AllocationManager is
             hasPendingAllocationOrDeallocation = true;
         }
 
-        
+        // // Read current magnitude's respective array index and length.
+        // (,uint256 latestAllocPos, uint256 allocLength) =
+        //     magnitudeUpdates.upperLookupRecentWithPos(uint32(block.timestamp));
 
-        // Read current magnitude's respective array index and length.
-        (,uint256 latestAllocPos, uint256 allocLength) =
-            magnitudeUpdates.upperLookupRecentWithPos(uint32(block.timestamp));
+        // if (latestAllocPos < allocLength - 1) {
+        //     numPendingAllocations = allocLength - 1 - latestAllocPos;
+        // }
+        // // Else, latestAllocPos >= allocLength - 1;
+        // // latestAllocPos cannot be greater than length - 1, thus when pos == length - 1 there are no pending allocations
 
-        if (latestAllocPos < allocLength - 1) {
-            numPendingAllocations = allocLength - 1 - latestAllocPos;
-        }
-        // Else, latestAllocPos >= allocLength - 1;
-        // latestAllocPos cannot be greater than length - 1, thus when pos == length - 1 there are no pending allocations
+        // // Get pending deallocations
+        // uint256 deallocationsLength = _queuedDeallocationIndices[operator][strategy][operatorSetKey].length;
+        // for (uint256 i = deallocationsLength; i > 0; --i) {
+        //     // index of pendingFreeMagnitude/deallocation to check for slashing
+        //     uint256 index = _queuedDeallocationIndices[operator][strategy][operatorSetKey][i - 1];
 
-        // Get pending deallocations
-        uint256 deallocationsLength = _queuedDeallocationIndices[operator][strategy][operatorSetKey].length;
-        for (uint256 i = deallocationsLength; i > 0; --i) {
-            // index of pendingFreeMagnitude/deallocation to check for slashing
-            uint256 index = _queuedDeallocationIndices[operator][strategy][operatorSetKey][i - 1];
-
-            // If completableTimestamp is greater than completeUntilTimestamp, break
-            if (block.timestamp < _pendingFreeMagnitude[operator][strategy][index].completableTimestamp) {
-                ++numPendingDeallocations;
-            } else {
-                break;
-            }
-        }
+        //     // If completableTimestamp is greater than completeUntilTimestamp, break
+        //     if (block.timestamp < _pendingFreeMagnitude[operator][strategy][index].completableTimestamp) {
+        //         ++numPendingDeallocations;
+        //     } else {
+        //         break;
+        //     }
+        // }
     }
 
     /// @dev gets the latest total magnitude or overwrites it if it is not set
