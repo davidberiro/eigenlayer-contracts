@@ -22,10 +22,6 @@ contract AllocationManager is
     /// @dev BIPS factor for slashable bips
     uint256 internal constant BIPS_FACTOR = 10_000;
 
-    /// @dev Maximum number of pending updates that can be queued for allocations/deallocations
-    /// Note this max applies for a single (operator, strategy, operatorSet) tuple.
-    uint256 public constant MAX_PENDING_UPDATES = 1;
-
     /// @dev Returns the chain ID from the time the contract was deployed.
     uint256 internal immutable ORIGINAL_CHAIN_ID;
 
@@ -315,12 +311,12 @@ contract AllocationManager is
             bytes32 operatorSetKey = _encodeOperatorSet(allocation.operatorSets[i]);
             // prep magnitudeUpdates in storage
 
-            // Check that there is at MOST `MAX_PENDING_UPDATES` combined allocations & deallocations for the operator, operatorSet, strategy
-            (uint256 numPendingAllocations, uint256 numPendingDeallocations) =
-                _getPendingAllocationsAndDeallocations(operator, allocation.strategy, operatorSetKey);
+            // Check that there is no pending allocation or deallocation
+            (bool hasPendingAllocationOrDeallocation) =
+                _hasPendingAllocationOrDeallocation(operator, allocation.strategy, operatorSetKey);
 
             require(
-                numPendingAllocations + numPendingDeallocations < MAX_PENDING_UPDATES,
+                !hasPendingAllocationOrDeallocation
                 PendingAllocationOrDeallocation()
             );
 
@@ -351,6 +347,7 @@ contract AllocationManager is
                 );
 
                 // 2. decrement allocated magnitude
+                // TODO: don't need to decrement since can have at most 1 pending allocation/deallocation
                 magnitudeUpdates.decrementAtAndFutureSnapshots({
                     key: uint32(block.timestamp),
                     decrementValue: magnitudeToDeallocate
@@ -365,7 +362,7 @@ contract AllocationManager is
                 require(info.freeMagnitude >= magnitudeToAllocate, InsufficientAllocatableMagnitude());
                 info.freeMagnitude -= magnitudeToAllocate;
 
-                // 2. allocate magnitude which will take effect in the future 21 days from now
+                // 2. allocate magnitude which will take effect 
                 magnitudeUpdates.push({key: allocationEffectTimestamp, value: allocation.magnitudes[i]});
             }
         }
@@ -378,13 +375,23 @@ contract AllocationManager is
      * @param operatorSetKey the encoded operatorSet to get queued allocation/deallocations for
      * @dev Does not make an assumption on the number of pending allocations or deallocations at a time
      */
-    function _getPendingAllocationsAndDeallocations(
+    function _hasPendingAllocationOrDeallocation(
         address operator,
         IStrategy strategy,
         bytes32 operatorSetKey
-    ) internal view returns (uint256 numPendingAllocations, uint256 numPendingDeallocations) {
+    ) internal view returns (bool hasPendingAllocationOrDeallocation) {
         // Get pending allocations
-        Snapshots.History storage magnitudeUpdates = _magnitudeUpdate[operator][strategy][operatorSetKey];
+        Snapshots.History storage magnitudeUpdates = _pendingMagnitudeUpdate[operator][strategy][operatorSetKey];
+
+        // Read the pending magnitude update's respective array index and length.
+        (,uint256 latestAllocPos, uint256 allocLength) =
+            magnitudeUpdates.upperLookupRecentWithPos(uint32(block.timestamp));
+
+        if (latestAllocPos < allocLength - 1) {
+            hasPendingAllocationOrDeallocation = true;
+        }
+
+        
 
         // Read current magnitude's respective array index and length.
         (,uint256 latestAllocPos, uint256 allocLength) =
