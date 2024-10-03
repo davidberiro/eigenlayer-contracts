@@ -11,7 +11,7 @@ import "src/test/mocks/ETHDepositMock.sol";
 import "src/test/mocks/ERC20Mock.sol";
 import "src/test/harnesses/EigenPodHarness.sol";
 import "src/test/utils/ProofParsing.sol";
-import "src/test/utils/EigenLayerUnitTestSetup.sol";
+import "src/test/utils/EigenLayerUnitTest.sol";
 import "src/test/events/IEigenPodEvents.sol";
 
 import "src/test/integration/mocks/BeaconChainMock.t.sol";
@@ -20,7 +20,7 @@ import "src/test/utils/EigenPodUser.t.sol";
 import "src/test/events/IEigenPodEvents.sol";
 
 
-contract EigenPodUnitTests is EigenLayerUnitTestSetup, EigenPodPausingConstants, IEigenPodEvents {
+contract EigenPodUnitTests is EigenLayerUnitTest, EigenPodPausingConstants, IEigenPodEvents {
     using Strings for *;
     using BytesLib for bytes;
     using BeaconChainProofs for *;
@@ -50,7 +50,7 @@ contract EigenPodUnitTests is EigenLayerUnitTestSetup, EigenPodPausingConstants,
 
     function setUp() public override virtual {
         // Setup
-        EigenLayerUnitTestSetup.setUp();
+        EigenLayerUnitTest.setUp();
 
         // Create time machine and beacon chain. Set block time to beacon chain genesis time
         // beaconChainMock will also etch 4788 precompile

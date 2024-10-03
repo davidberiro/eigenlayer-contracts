@@ -10,6 +10,11 @@ contract DelegationManagerMock is IDelegationManager, Test {
     mapping(address => bool) public isOperator;
     mapping(address => mapping(IStrategy => uint256)) public operatorShares;
 
+    function decreaseBeaconChainScalingFactor(
+        address staker,
+        Shares existingShares,
+        uint64 proportionOfOldBalance
+    ) external {}
 
     function operatorDelegatedShares(address operator, IStrategy strategy) external view returns (DelegatedShares) {}
 

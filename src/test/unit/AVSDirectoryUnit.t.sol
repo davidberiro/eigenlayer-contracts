@@ -8,9 +8,7 @@ import "src/contracts/core/AllocationManager.sol";
 import "src/contracts/core/AVSDirectory.sol";
 
 import "src/test/events/IAVSDirectoryEvents.sol";
-import "src/test/utils/EigenLayerUnitTestSetup.sol";
-
-contract EmptyContract {}
+import "src/test/utils/EigenLayerUnitTest.sol";
 
 /**
  * @notice Unit testing of the AVSDirectory contract. An AVSs' service manager contract will
@@ -18,10 +16,8 @@ contract EmptyContract {}
  * Contracts tested: AVSDirectory
  * Contracts not mocked: DelegationManager
  */
-contract AVSDirectoryUnitTests is EigenLayerUnitTestSetup, IAVSDirectoryEvents {
+contract AVSDirectoryUnitTests is EigenLayerUnitTest, IAVSDirectoryEvents {
     uint256 internal constant MAX_PRIVATE_KEY = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140;
-
-    EmptyContract emptyContract;
 
     // Contract under test
     AVSDirectory avsDirectory;
@@ -59,7 +55,7 @@ contract AVSDirectoryUnitTests is EigenLayerUnitTestSetup, IAVSDirectoryEvents {
 
     function setUp() public virtual override {
         // Setup
-        EigenLayerUnitTestSetup.setUp();
+        EigenLayerUnitTest.setUp();
 
         // Deploy DelegationManager implmentation and proxy
         initializeStrategiesToSetDelayBlocks = new IStrategy[](0);

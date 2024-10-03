@@ -118,7 +118,7 @@ library SlashingLib {
             .wrapDelegated();
     }
 
-    function toOwnedShares(DelegatedShares delegatedShares, uint256 magnitude) internal view returns (OwnedShares) {
+    function toOwnedShares(DelegatedShares delegatedShares, uint256 magnitude) internal pure returns (OwnedShares) {
         return delegatedShares.unwrap().mulWad(magnitude).wrapOwned();
     }
 
@@ -153,7 +153,7 @@ library SlashingLib {
             .wrapDelegated();
     }
 
-    function toDelegatedShares(Shares shares, uint256 magnitude) internal view returns (DelegatedShares) {
+    function toDelegatedShares(Shares shares, uint256 magnitude) internal pure returns (DelegatedShares) {
         return shares.unwrap().mulWad(magnitude).wrapDelegated();
     }
 

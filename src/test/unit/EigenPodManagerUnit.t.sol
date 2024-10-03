@@ -7,12 +7,12 @@ import "src/contracts/pods/EigenPodManager.sol";
 import "src/contracts/pods/EigenPodPausingConstants.sol";
 
 import "src/test/events/IEigenPodManagerEvents.sol";
-import "src/test/utils/EigenLayerUnitTestSetup.sol";
+import "src/test/utils/EigenLayerUnitTest.sol";
 import "src/test/harnesses/EigenPodManagerWrapper.sol";
 import "src/test/mocks/EigenPodMock.sol";
 import "src/test/mocks/ETHDepositMock.sol";
 
-contract EigenPodManagerUnitTests is EigenLayerUnitTestSetup {
+contract EigenPodManagerUnitTests is EigenLayerUnitTest {
     // Contracts Under Test: EigenPodManager
     EigenPodManager public eigenPodManagerImplementation;
     EigenPodManager public eigenPodManager;
@@ -31,7 +31,7 @@ contract EigenPodManagerUnitTests is EigenLayerUnitTestSetup {
     address public initialOwner = address(this);
 
     function setUp() virtual override public {
-        EigenLayerUnitTestSetup.setUp();
+        EigenLayerUnitTest.setUp();
 
         // Deploy Mocks
         ethPOSMock = new ETHPOSDepositMock();

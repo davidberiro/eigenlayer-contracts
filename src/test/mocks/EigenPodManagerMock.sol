@@ -17,6 +17,12 @@ contract EigenPodManagerMock is IEigenPodManager, Test, Pausable {
         _initializePauser(_pauserRegistry, 0);
     }
 
+    function recordBeaconChainETHBalanceUpdate(
+        address podOwner,
+        int256 sharesDelta,
+        uint64 proportionPodBalanceDecrease
+    ) external {}
+
     function removeShares(address staker, IStrategy strategy, Shares shares) external {}
 
     function addOwnedShares(address staker, IStrategy strategy, IERC20 token, OwnedShares shares) external {}

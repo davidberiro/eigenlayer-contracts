@@ -8,7 +8,7 @@
 // import "src/contracts/strategies/StrategyBase.sol";
 
 // import "src/test/events/IDelegationManagerEvents.sol";
-// import "src/test/utils/EigenLayerUnitTestSetup.sol";
+// import "src/test/utils/EigenLayerUnitTest.sol";
 
 // /**
 //  * @notice Unit testing of the DelegationManager contract. Withdrawals are tightly coupled
@@ -16,7 +16,7 @@
 //  * Contracts tested: DelegationManager
 //  * Contracts not mocked: StrategyBase, PauserRegistry
 //  */
-// contract DelegationManagerUnitTests is EigenLayerUnitTestSetup, IDelegationManagerEvents {
+// contract DelegationManagerUnitTests is EigenLayerUnitTest, IDelegationManagerEvents {
 //     // Contract under test
 //     DelegationManager delegationManager;
 //     DelegationManager delegationManagerImplementation;
@@ -68,7 +68,7 @@
 
 //     function setUp() public virtual override {
 //         // Setup
-//         EigenLayerUnitTestSetup.setUp();
+//         EigenLayerUnitTest.setUp();
 
 //         // Deploy DelegationManager implmentation and proxy
 //         initializeStrategiesToSetDelayBlocks = new IStrategy[](0);

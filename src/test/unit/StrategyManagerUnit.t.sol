@@ -11,7 +11,7 @@ import "src/test/mocks/Reverter.sol";
 import "src/test/mocks/Reenterer.sol";
 import "src/test/mocks/MockDecimals.sol";
 import "src/test/events/IStrategyManagerEvents.sol";
-import "src/test/utils/EigenLayerUnitTestSetup.sol";
+import "src/test/utils/EigenLayerUnitTest.sol";
 
 /**
  * @notice Unit testing of the StrategyManager contract, entire withdrawal tests related to the
@@ -19,7 +19,7 @@ import "src/test/utils/EigenLayerUnitTestSetup.sol";
  * Contracts tested: StrategyManager.sol
  * Contracts not mocked: StrategyBase, PauserRegistry
  */
-contract StrategyManagerUnitTests is EigenLayerUnitTestSetup, IStrategyManagerEvents {
+contract StrategyManagerUnitTests is EigenLayerUnitTest, IStrategyManagerEvents {
     StrategyManager public strategyManagerImplementation;
     StrategyManager public strategyManager;
 
@@ -36,7 +36,7 @@ contract StrategyManagerUnitTests is EigenLayerUnitTestSetup, IStrategyManagerEv
     address constant dummyAdmin = address(uint160(uint256(keccak256("DummyAdmin"))));
 
     function setUp() public override {
-        EigenLayerUnitTestSetup.setUp();
+        EigenLayerUnitTest.setUp();
         strategyManagerImplementation = new StrategyManager(delegationManagerMock, eigenPodManagerMock, slasherMock, avsDirectoryMock);
         strategyManager = StrategyManager(
             address(

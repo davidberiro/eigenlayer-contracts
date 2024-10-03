@@ -8,7 +8,7 @@ import "src/contracts/core/RewardsCoordinator.sol";
 import "src/contracts/strategies/StrategyBase.sol";
 
 import "src/test/events/IRewardsCoordinatorEvents.sol";
-import "src/test/utils/EigenLayerUnitTestSetup.sol";
+import "src/test/utils/EigenLayerUnitTest.sol";
 import "src/test/mocks/Reenterer.sol";
 import "src/test/mocks/ERC20Mock.sol";
 
@@ -17,7 +17,7 @@ import "src/test/mocks/ERC20Mock.sol";
  * Contracts tested: RewardsCoordinator
  * Contracts not mocked: StrategyBase, PauserRegistry
  */
-contract RewardsCoordinatorUnitTests is EigenLayerUnitTestSetup, IRewardsCoordinatorEvents {
+contract RewardsCoordinatorUnitTests is EigenLayerUnitTest, IRewardsCoordinatorEvents {
     // used for stack too deep
     struct FuzzAVSRewardsSubmission {
         address avs;
@@ -100,7 +100,7 @@ contract RewardsCoordinatorUnitTests is EigenLayerUnitTestSetup, IRewardsCoordin
 
     function setUp() public virtual override {
         // Setup
-        EigenLayerUnitTestSetup.setUp();
+        EigenLayerUnitTest.setUp();
 
         // Deploy RewardsCoordinator proxy and implementation
         rewardsCoordinatorImplementation = new RewardsCoordinator(

@@ -5,14 +5,14 @@ import "@openzeppelin/contracts/token/ERC20/presets/ERC20PresetFixedSupply.sol";
 import "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 
 import "src/contracts/strategies/StrategyFactory.sol";
-import "src/test/utils/EigenLayerUnitTestSetup.sol";
+import "src/test/utils/EigenLayerUnitTest.sol";
 import "../../contracts/permissions/PauserRegistry.sol";
 
 /**
  * @notice Unit testing of the StrategyFactory contract.
  * Contracts tested: StrategyFactory
  */
-contract StrategyFactoryUnitTests is EigenLayerUnitTestSetup {
+contract StrategyFactoryUnitTests is EigenLayerUnitTest {
     // Contract under test
     StrategyFactory public strategyFactory;
     StrategyFactory public strategyFactoryImplementation;
@@ -38,7 +38,7 @@ contract StrategyFactoryUnitTests is EigenLayerUnitTestSetup {
     event TokenBlacklisted(IERC20 token);
 
     function setUp() virtual override public {
-        EigenLayerUnitTestSetup.setUp();
+        EigenLayerUnitTest.setUp();
 
         address[] memory pausers = new address[](1);
         pausers[0] = pauser;
