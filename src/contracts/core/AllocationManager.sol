@@ -280,7 +280,7 @@ contract AllocationManager is
             PendingMagnitudeInfo memory info = _getPendingMagnitudeInfo(operator, strategy, opSetKey);
 
             // If we've reached a pending modification that isn't completable yet,
-            // we can stop. Any subsequent modificaitons will also be uncompletable.
+            // we can stop. Any subsequent modifications will also be uncompletable.
             if (block.timestamp < info.effectTimestamp) {
                 break;
             }
