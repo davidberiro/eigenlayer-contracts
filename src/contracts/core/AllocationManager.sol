@@ -187,7 +187,7 @@ contract AllocationManager is
             PendingMagnitudeInfo memory info = 
                 _getPendingMagnitudeInfo(params.operator, params.strategies[i], operatorSetKey);
 
-            // 1. Calculate slashing amount and update current/ encumbered magnitude
+            // 1. Calculate slashing amount and update current/encumbered magnitude
             uint64 slashedMagnitude = uint64(uint256(info.currentMagnitude).mulWad(params.wadToSlash));
             info.currentMagnitude -= slashedMagnitude;
             info.encumberedMagnitude -= slashedMagnitude;
