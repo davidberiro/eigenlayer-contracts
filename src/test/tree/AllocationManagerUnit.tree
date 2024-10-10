@@ -76,11 +76,11 @@
     ├── given that the operator is deregistered from AVS for the given timestamp
     │   └── it should revert
     └── it should loop through all slashing params
-        └── it should slash the current magnitude by wads to slash
-            ├── given that there is a pending deallocation
-            │   ├── it should slash the pending diff
-            │   └── it should emit an event for OperatorSetMagnitudeUpdated with the orginial deallocation's effect timestamp
-            ├── it should update the magnitude info, encumbered magnitude, emit an event for encumbered magnitude
-            ├── it should decrease the operator's magnitude by the
-            ├── it should decrease the operators shares in the delegation manager
-            └── It should emit an OperatorSetMagnitudeUpdated event
+        ├── it should slash the current magnitude by wads to slash
+        ├── given that there is a pending deallocation
+        │   ├── it should slash the pending diff
+        │   └── it should emit an event for OperatorSetMagnitudeUpdated with the orginial deallocation's effect timestamp
+        ├── it should update the magnitude info, encumbered magnitude, emit an event for encumbered magnitude
+        ├── it should decrease the operator's max magnitude
+        ├── it should decrease the operators shares in the delegation manager
+        └── It should emit an OperatorSetMagnitudeUpdated event

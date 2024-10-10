@@ -36,6 +36,8 @@ interface IAllocationManagerErrors {
     error SaltSpent();
     /// @dev Thrown when attempting to slash an operator that has already been slashed at the given timestamp.
     error AlreadySlashedForTimestamp();
+    /// @dev Thrown when attempting to slash for magnitude not allocated
+    error InvalidMagnitudeToSlash();
 }
 
 interface IAllocationManagerTypes {
