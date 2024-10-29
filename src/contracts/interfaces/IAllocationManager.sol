@@ -90,12 +90,12 @@ interface IAllocationManagerTypes {
     /**
      * @notice Contains registration details for an operator pertaining to an operator set
      * @param registered Whether the operator is currently registered for the operator set
-     * @param slashableUntil If the operator is not registered, how long until the operator is no longer
+     * @param registeredUntil If the operator is not registered, how long until the operator is no longer
      * slashable by the AVS.
      */
     struct RegistrationStatus {
         bool registered;
-        uint32 slashableUntil;
+        uint32 registeredUntil;
     }
 
     struct StrategyInfo {
@@ -270,7 +270,7 @@ interface IAllocationManager is ISignatureUtils, IAllocationManagerErrors, IAllo
      */
 
     /**
-     * @notice Returns whether an operator is slashable for a given operator set
+     * @notice Returns whether an operator has any slashable allocations in an operator set
      * @dev An operator remains slashable after deregistration for `DEALLOCATION_DELAY` blocks
      * @param operator the operator to query
      * @param operatorSet the operator set to query
