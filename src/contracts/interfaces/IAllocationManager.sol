@@ -270,42 +270,52 @@ interface IAllocationManager is ISignatureUtils, IAllocationManagerErrors, IAllo
      */
 
     /**
-     * @notice Returns whether an operator has any slashable allocations in an operator set
-     * @dev An operator remains slashable after deregistration for `DEALLOCATION_DELAY` blocks
+     * @notice Returns the list of operator sets the operator has current or pending allocations/deallocations in
      * @param operator the operator to query
-     * @param operatorSet the operator set to query
+     * @return the list of operator sets the operator has current or pending allocations/deallocations in
      */
-    function isOperatorSlashable(address operator, OperatorSet memory operatorSet) external view returns (bool);
+    function getAllocatedSets(
+        address operator
+    ) external view returns (OperatorSet[] memory);
 
     /**
-     * @notice Returns the effective magnitude info for each of an operator's operator sets.
-     * This method fetches the complete list of an operator's operator sets, then applies any
-     * completable allocation modifications to return the effective, up-to-date current and
-     * pending magnitude allocations for each operator set.
+     * @notice Returns the list of strategies an operator has current or pending allocations/deallocations from
+     * given a specific operator set.
      * @param operator the operator to query
-     * @param strategy the strategy to get allocation info for
-     * @return the list of the operator's operator sets
-     * @return the corresponding allocation details for each operator set
+     * @param operatorSet the operator set to query
+     * @return the list of strategies
      */
-    function getAllocationInfo(
+    function getAllocatedStrategies(
+        address operator,
+        OperatorSet memory operatorSet
+    ) external view returns (IStrategy[] memory);
+
+    /**
+     * @notice Returns the current/pending stake allocation an operator has from a strategy to an operator set
+     * @param operator the operator to query
+     * @param operatorSet the operator set to query
+     * @param strategy the strategy to query
+     * @return the current/pending stake allocation
+     */
+    function getAllocation(
+        address operator,
+        OperatorSet memory operatorSet,
+        IStrategy strategy
+    ) external view returns (Allocation memory);
+
+    /**
+     * @notice Given a strategy, returns a list of operator sets and corresponding stake allocations.
+     * @dev Note that this returns a list of ALL operator sets the operator has allocations in. This means
+     * some of the returned allocations may be zero.
+     * @param operator the operator to query
+     * @param strategy the strategy to query
+     * @return the list of all operator sets the operator has allocations for
+     * @return the corresponding list of allocations from the specific `strategy`
+     */
+    function getStrategyAllocations(
         address operator,
         IStrategy strategy
     ) external view returns (OperatorSet[] memory, Allocation[] memory);
-
-    /**
-     * @notice Returns the magnitude allocation for each operator set. This method
-     * automatically applies any completable modifications, returning the effective
-     * current and pending allocations for each operator set.
-     * @param operator the operator to query
-     * @param strategy the strategy to get allocation info for
-     * @param operatorSets the operatorSets to get allocation info for
-     * @return The allocation for each operator set
-     */
-    function getAllocationInfo(
-        address operator,
-        IStrategy strategy,
-        OperatorSet[] calldata operatorSets
-    ) external view returns (Allocation[] memory);
 
     /**
      * @notice For a strategy, get the amount of magnitude not currently allocated to any operator set

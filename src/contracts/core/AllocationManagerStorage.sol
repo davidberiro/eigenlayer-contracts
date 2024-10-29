@@ -58,8 +58,15 @@ abstract contract AllocationManagerStorage is IAllocationManager {
     /// without being registered.
     mapping(address operator => EnumerableSet.Bytes32Set) internal registeredSets;
 
+    /// @dev Lists the operator sets the operator has outstanding allocations in.
+    mapping(address operator => EnumerableSet.Bytes32Set) internal allocatedSets;
+
     /// @dev Contains the operator's registration status for an operator set.
     mapping(address operator => mapping(bytes32 operatorSetKey => RegistrationStatus)) internal registrationStatus;
+
+    /// @dev For an operator set, lists all strategies an operator has outstanding allocations from.
+    mapping(address operator => mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet)) internal
+        allocatedStrategies;
 
     /// @dev For an operator set and strategy, the current allocated magnitude and any pending modification
     mapping(address operator => mapping(bytes32 operatorSetKey => mapping(IStrategy strategy => Allocation))) internal

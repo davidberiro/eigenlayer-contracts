@@ -160,7 +160,7 @@ contract AllocationManager is
 
                 // 2. Check whether the operator's allocation is slashable. If not, we allow instant
                 // deallocation.
-                bool isSlashable = _isAllocationSlashable(msg.sender, operatorSet, strategy, allocation, isRegistered);
+                bool isSlashable = _isAllocationSlashable(operatorSet, strategy, allocation, isRegistered);
 
                 // 3. Calculate the change in magnitude
                 allocation.pendingDiff = _calcDelta(allocation.currentMagnitude, params[i].newMagnitudes[j]);
@@ -259,9 +259,30 @@ contract AllocationManager is
                 registeredUntil: uint32(block.number) + DEALLOCATION_DELAY
             });
 
-            // TODO - should this instead do modifyAllocations + removing allocations?
-            // issue right now is if I call deregister, i have to actually go remove allocations.
-            // if i re-register, i immediately become slashable again
+            // Iterate over each allocated strategy in reverse order so that if we remove
+            // elements from `allocatedStrategies`, iteration order remains the same.
+            uint256 length = allocatedStrategies[params.operator][operatorSet.key()].length();
+            for (uint256 j = length; j > 0; j--) {
+                IStrategy strategy = IStrategy(allocatedStrategies[params.operator][operatorSet.key()].at(j));
+                (StrategyInfo memory info, Allocation memory allocation) =
+                    _getUpdatedAllocation(params.operator, operatorSet.key(), strategy);
+
+                // If there's a pending modification, don't do anything
+                if (allocation.pendingDiff != 0) {
+                    continue;
+                }
+
+                // If we have magnitude to deallocate, create a pending deallocation for the
+                // entire amount
+                if (allocation.currentMagnitude != 0) {
+                    allocation.pendingDiff = -int128(uint128(allocation.currentMagnitude));
+                    allocation.effectBlock = uint32(block.number) + DEALLOCATION_DELAY;
+                    deallocationQueue[params.operator][strategy].pushBack(operatorSet.key());
+                }
+
+                // Update state
+                _updateAllocationInfo(params.operator, operatorSet.key(), strategy, info, allocation);
+            }
         }
 
         // Call the AVS to complete deregistration. Even if the AVS reverts, the operator is
@@ -397,7 +418,6 @@ contract AllocationManager is
     }
 
     function _isAllocationSlashable(
-        address operator,
         OperatorSet memory operatorSet,
         IStrategy strategy,
         Allocation memory allocation,
@@ -467,13 +487,31 @@ contract AllocationManager is
         StrategyInfo memory info,
         Allocation memory allocation
     ) internal {
+        // Update encumbered magnitude
+        encumberedMagnitude[operator][strategy] = info.encumberedMagnitude;
+        emit EncumberedMagnitudeUpdated(operator, strategy, info.encumberedMagnitude);
+
+        // Update allocation for this operator set from the strategy
         allocations[operator][operatorSetKey][strategy] = allocation;
         emit AllocationUpdated(
             operator, OperatorSetLib.decode(operatorSetKey), strategy, allocation.currentMagnitude, uint32(block.number)
         );
 
-        encumberedMagnitude[operator][strategy] = info.encumberedMagnitude;
-        emit EncumberedMagnitudeUpdated(operator, strategy, info.encumberedMagnitude);
+        // Note: these no-op if the sets already contain the added values (or do not contain removed ones)
+        if (allocation.pendingDiff != 0) {
+            // If we have a pending modification, ensure the allocation is in the operator's
+            // list of enumerable strategies/sets.
+            allocatedStrategies[operator][operatorSetKey].add(address(strategy));
+            allocatedSets[operator].add(operatorSetKey);
+        } else if (allocation.currentMagnitude == 0) {
+            // If we do NOT have a pending modification, and no existing magnitude, remove the
+            // allocation from the operator's lists.
+            allocatedStrategies[operator][operatorSetKey].remove(address(strategy));
+
+            if (allocatedStrategies[operator][operatorSetKey].length() == 0) {
+                allocatedSets[operator].remove(operatorSetKey);
+            }
+        }
     }
 
     function _updateMaxMagnitude(address operator, IStrategy strategy, uint64 newMaxMagnitude) internal {
@@ -496,50 +534,64 @@ contract AllocationManager is
      */
 
     /// @inheritdoc IAllocationManager
-    function isOperatorSlashable(address operator, OperatorSet memory operatorSet) external view returns (bool) {
-        uint256 length = _operatorSetStrategies[operatorSet.key()].length();
-        bool isRegistered = _isRegistered(operator, operatorSet);
+    function getAllocatedSets(
+        address operator
+    ) external view returns (OperatorSet[] memory) {
+        uint256 length = allocatedSets[operator].length();
 
-        // Check whether the operator has a slashable allocation in any strategy recognized
-        // by the operator set
+        OperatorSet[] memory operatorSets = new OperatorSet[](length);
         for (uint256 i = 0; i < length; i++) {
-            IStrategy strategy = IStrategy(_operatorSetStrategies[operatorSet.key()].at(i));
-            (, Allocation memory allocation) = _getUpdatedAllocation(operator, operatorSet.key(), strategy);
-
-            if (_isAllocationSlashable(operator, operatorSet, strategy, allocation, isRegistered)) {
-                return true;
-            }
+            operatorSets[i] = OperatorSetLib.decode(allocatedSets[operator].at(i));
         }
 
-        return false;
+        return operatorSets;
     }
 
     /// @inheritdoc IAllocationManager
-    function getAllocationInfo(
+    function getAllocatedStrategies(
+        address operator,
+        OperatorSet memory operatorSet
+    ) external view returns (IStrategy[] memory) {
+        uint256 length = allocatedStrategies[operator][operatorSet.key()].length();
+
+        IStrategy[] memory strategies = new IStrategy[](length);
+        for (uint256 i = 0; i < length; i++) {
+            strategies[i] = IStrategy(allocatedStrategies[operator][operatorSet.key()].at(i));
+        }
+
+        return strategies;
+    }
+
+    /// @inheritdoc IAllocationManager
+    function getAllocation(
+        address operator,
+        OperatorSet memory operatorSet,
+        IStrategy strategy
+    ) external view returns (Allocation memory) {
+        (, Allocation memory allocation) = _getUpdatedAllocation(operator, operatorSet.key(), strategy);
+
+        return allocation;
+    }
+
+    /// @inheritdoc IAllocationManager
+    function getStrategyAllocations(
         address operator,
         IStrategy strategy
     ) external view returns (OperatorSet[] memory, Allocation[] memory) {
-        OperatorSet[] memory operatorSets = getRegisteredSets(operator, 0, type(uint256).max);
-        Allocation[] memory _allocations = getAllocationInfo(operator, strategy, operatorSets);
-        return (operatorSets, _allocations);
-    }
+        uint256 length = allocatedSets[operator].length();
 
-    /// @inheritdoc IAllocationManager
-    function getAllocationInfo(
-        address operator,
-        IStrategy strategy,
-        OperatorSet[] memory operatorSets
-    ) public view returns (Allocation[] memory) {
-        Allocation[] memory _allocations = new Allocation[](operatorSets.length);
+        OperatorSet[] memory operatorSets = new OperatorSet[](length);
+        Allocation[] memory _allocations = new Allocation[](length);
 
-        for (uint256 i = 0; i < operatorSets.length; ++i) {
-            (, Allocation memory allocation) =
-                _getUpdatedAllocation({operator: operator, operatorSetKey: operatorSets[i].key(), strategy: strategy});
+        for (uint256 i = 0; i < length; i++) {
+            OperatorSet memory operatorSet = OperatorSetLib.decode(allocatedSets[operator].at(i));
+            (, Allocation memory allocation) = _getUpdatedAllocation(operator, operatorSet.key(), strategy);
 
+            operatorSets[i] = OperatorSetLib.decode(allocatedSets[operator].at(i));
             _allocations[i] = allocation;
         }
 
-        return _allocations;
+        return (operatorSets, _allocations);
     }
 
     /// @inheritdoc IAllocationManager
