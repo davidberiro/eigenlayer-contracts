@@ -98,6 +98,11 @@ interface IAllocationManagerTypes {
         uint32 registeredUntil;
     }
 
+    /**
+     * @notice Contains allocation info for a specific strategy
+     * @param maxMagnitude the maximum magnitude that can be allocated between all operator sets
+     * @param encumberedMagnitude the currently-allocated magnitude for the strategy
+     */
     struct StrategyInfo {
         uint64 maxMagnitude;
         uint64 encumberedMagnitude;
@@ -130,18 +135,35 @@ interface IAllocationManagerTypes {
         uint64[] newMagnitudes;
     }
 
+    /**
+     * @notice Parameters used to register for an AVS's operator sets
+     * @param avs the AVS being registered for
+     * @param operatorSetIds the operator sets within the AVS to register for
+     * @param data extra data to be passed to the AVS to complete registration
+     */
     struct RegisterParams {
         address avs;
         uint32[] operatorSetIds;
         bytes data;
     }
 
+    /**
+     * @notice Parameters used to deregister from an AVS's operator sets
+     * @param operator the operator being deregistered
+     * @param avs the avs being deregistered from
+     * @param operatorSetIds the operator sets within the AVS being deregistered from
+     */
     struct DeregisterParams {
         address operator;
         address avs;
         uint32[] operatorSetIds;
     }
 
+    /**
+     * @notice Parameters used by an AVS to create new operator sets
+     * @param operatorSetId the id of the operator set to create
+     * @param strategies the strategies to add as slashable to the operator set
+     */
     struct CreateSetParams {
         uint32 operatorSetId;
         IStrategy[] strategies;
@@ -227,40 +249,68 @@ interface IAllocationManager is ISignatureUtils, IAllocationManagerErrors, IAllo
         uint16[] calldata numToClear
     ) external;
 
+    /**
+     * @notice Allows an operator to register for one or more operator sets for an AVS. If the operator
+     * has any stake allocated to these operator sets, it immediately becomes slashable.
+     * @dev After registering within the ALM, this method calls `avs.registerOperator` to complete
+     * registration. This call MUST succeed in order for registration to be successful.
+     */
     function registerForOperatorSets(
         RegisterParams calldata params
     ) external;
 
+    /**
+     * @notice Allows an operator or AVS to deregister the operator from one or more of the AVS's operator sets.
+     * If the operator has any slashable stake allocated to the AVS, it remains slashable until the
+     * DEALLOCATION_DELAY has passed.
+     * @dev After deregistering within the ALM, this method calls `avs.deregisterOperator` to complete
+     * deregistration. If this call reverts, it is ignored.
+     */
     function deregisterFromOperatorSets(
         DeregisterParams calldata params
     ) external;
 
     /**
      * @notice Called by the delegation manager to set an operator's allocation delay.
-     * This is set when the operator first registers, and is the time between an operator
+     * This is set when the operator first registers, and is the number of blocks between an operator
      * allocating magnitude to an operator set, and the magnitude becoming slashable.
      * @param operator The operator to set the delay on behalf of.
-     * @param delay the allocation delay in seconds
+     * @param delay the allocation delay in blocks
      */
     function setAllocationDelay(address operator, uint32 delay) external;
 
     /**
-     * @notice Called by an operator to set their allocation delay. This is the time between an operator
+     * @notice Called by an operator to set their allocation delay. This is number of blocks between an operator
      * allocating magnitude to an operator set, and the magnitude becoming slashable.
-     * @dev Note that if an operator's allocation delay is 0, it has not been set yet,
-     * and the operator will be unable to allocate magnitude to any operator set.
-     * @param delay the allocation delay in seconds
+     * @dev Note that if an operator's allocation delay has not been set, the operator will be unable to allocate
+     * slashable magnitude to any operator set.
+     * @param delay the allocation delay in blocks
      */
     function setAllocationDelay(
         uint32 delay
     ) external;
 
+    /**
+     * @notice Allows an AVS to create new operator sets, defining strategies that the operator set uses
+     */
     function createOperatorSets(
         CreateSetParams[] calldata params
     ) external;
 
+    /**
+     * @notice Allows an AVS to add strategies to an operator set
+     * @dev Strategies MUST NOT already exist in the operator set
+     * @param operatorSetId the operator set to add strategies to
+     * @param strategies the strategies to add
+     */
     function addStrategiesToOperatorSet(uint32 operatorSetId, IStrategy[] calldata strategies) external;
 
+    /**
+     * @notice Allows an AVS to remove strategies from an operator set
+     * @dev Strategies MUST already exist in the operator set
+     * @param operatorSetId the operator set to remove strategies from
+     * @param strategies the strategies to remove
+     */
     function removeStrategiesFromOperatorSet(uint32 operatorSetId, IStrategy[] calldata strategies) external;
 
     /**
@@ -427,13 +477,6 @@ interface IAllocationManager is ISignatureUtils, IAllocationManagerErrors, IAllo
     function getStrategiesInOperatorSet(
         OperatorSet memory operatorSet
     ) external view returns (IStrategy[] memory strategies);
-
-    /**
-     * @notice Returns whether or not an operator is registered to an operator set.
-     * @param operator The operator address to query.
-     * @param operatorSet The `OperatorSet` to query.
-     */
-    function isMember(address operator, OperatorSet memory operatorSet) external view returns (bool);
 
     /**
      * @notice returns the current operatorShares and the slashableOperatorShares for an operator, list of strategies,

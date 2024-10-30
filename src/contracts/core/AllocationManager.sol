@@ -142,6 +142,10 @@ contract AllocationManager is
             require(params[i].strategies.length == params[i].newMagnitudes.length, InputArrayLengthMismatch());
 
             // Check that the operator set exists and get the operator's registration status
+            // Operators do not need to be registered for an operator set in order to allocate
+            // slashable magnitude to the set. In fact, it is expected that operators will
+            // allocate magnitude before registering, as AVS's will likely only accept
+            // registrations from operators that are already slashable.
             OperatorSet calldata operatorSet = params[i].operatorSet;
             bool isRegistered = _isRegistered(msg.sender, operatorSet);
             require(_operatorSets[operatorSet.avs].contains(operatorSet.id), InvalidOperatorSet());
@@ -231,7 +235,7 @@ contract AllocationManager is
             registrationStatus[msg.sender][operatorSet.key()].registered = true;
         }
 
-        // Call the AVS to complete registration. If the AVS reverts, registration will fail
+        // Call the AVS to complete registration. If the AVS reverts, registration will fail.
         IAVS(params.avs).registerOperator(msg.sender, params.operatorSetIds, params.data);
     }
 
@@ -258,31 +262,6 @@ contract AllocationManager is
                 registered: false,
                 registeredUntil: uint32(block.number) + DEALLOCATION_DELAY
             });
-
-            // Iterate over each allocated strategy in reverse order so that if we remove
-            // elements from `allocatedStrategies`, iteration order remains the same.
-            uint256 length = allocatedStrategies[params.operator][operatorSet.key()].length();
-            for (uint256 j = length; j > 0; j--) {
-                IStrategy strategy = IStrategy(allocatedStrategies[params.operator][operatorSet.key()].at(j));
-                (StrategyInfo memory info, Allocation memory allocation) =
-                    _getUpdatedAllocation(params.operator, operatorSet.key(), strategy);
-
-                // If there's a pending modification, don't do anything
-                if (allocation.pendingDiff != 0) {
-                    continue;
-                }
-
-                // If we have magnitude to deallocate, create a pending deallocation for the
-                // entire amount
-                if (allocation.currentMagnitude != 0) {
-                    allocation.pendingDiff = -int128(uint128(allocation.currentMagnitude));
-                    allocation.effectBlock = uint32(block.number) + DEALLOCATION_DELAY;
-                    deallocationQueue[params.operator][strategy].pushBack(operatorSet.key());
-                }
-
-                // Update state
-                _updateAllocationInfo(params.operator, operatorSet.key(), strategy, info, allocation);
-            }
         }
 
         // Call the AVS to complete deregistration. Even if the AVS reverts, the operator is
@@ -318,10 +297,7 @@ contract AllocationManager is
             // Add strategies to the operator set
             bytes32 operatorSetKey = operatorSet.key();
             for (uint256 j = 0; j < params[i].strategies.length; j++) {
-                require(
-                    _operatorSetStrategies[operatorSetKey].add(address(params[i].strategies[j])),
-                    StrategyAlreadyInOperatorSet()
-                );
+                _operatorSetStrategies[operatorSetKey].add(address(params[i].strategies[j]));
                 emit StrategyAddedToOperatorSet(operatorSet, params[i].strategies[j]);
             }
         }
@@ -582,7 +558,6 @@ contract AllocationManager is
 
         OperatorSet[] memory operatorSets = new OperatorSet[](length);
         Allocation[] memory _allocations = new Allocation[](length);
-
         for (uint256 i = 0; i < length; i++) {
             OperatorSet memory operatorSet = OperatorSetLib.decode(allocatedSets[operator].at(i));
             (, Allocation memory allocation) = _getUpdatedAllocation(operator, operatorSet.key(), strategy);
@@ -627,7 +602,7 @@ contract AllocationManager is
     /// @inheritdoc IAllocationManager
     function getMaxMagnitudes(
         address operator,
-        IStrategy[] calldata strategies
+        IStrategy[] memory strategies
     ) external view returns (uint64[] memory) {
         uint64[] memory maxMagnitudes = new uint64[](strategies.length);
 
@@ -641,7 +616,7 @@ contract AllocationManager is
     /// @inheritdoc IAllocationManager
     function getMaxMagnitudesAtBlock(
         address operator,
-        IStrategy[] calldata strategies,
+        IStrategy[] memory strategies,
         uint32 blockNumber
     ) external view returns (uint64[] memory) {
         uint64[] memory maxMagnitudes = new uint64[](strategies.length);
@@ -675,14 +650,13 @@ contract AllocationManager is
     function getRegisteredSets(
         address operator,
         uint256 start,
-        uint256 length
+        uint256 count
     ) public view returns (OperatorSet[] memory) {
-        uint256 maxLength = registeredSets[operator].length() - start;
-        if (length > maxLength) length = maxLength;
+        uint256 maxCount = registeredSets[operator].length() - start;
+        if (count > maxCount) count = maxCount;
 
-        OperatorSet[] memory operatorSets = new OperatorSet[](length);
-
-        for (uint256 i = 0; i < length; ++i) {
+        OperatorSet[] memory operatorSets = new OperatorSet[](count);
+        for (uint256 i = 0; i < count; ++i) {
             // forgefmt: disable-next-item
             operatorSets[i] = OperatorSetLib.decode(
                 registeredSets[operator].at(start + i)
@@ -711,14 +685,13 @@ contract AllocationManager is
     function getMembers(
         OperatorSet memory operatorSet,
         uint256 start,
-        uint256 length
+        uint256 count
     ) external view returns (address[] memory) {
-        uint256 maxLength = _operatorSetMembers[operatorSet.key()].length() - start;
-        if (length > maxLength) length = maxLength;
+        uint256 maxCount = _operatorSetMembers[operatorSet.key()].length() - start;
+        if (count > maxCount) count = maxCount;
 
-        address[] memory operators = new address[](length);
-
-        for (uint256 i = 0; i < length; ++i) {
+        address[] memory operators = new address[](count);
+        for (uint256 i = 0; i < count; ++i) {
             operators[i] = _operatorSetMembers[operatorSet.key()].at(start + i);
         }
 
@@ -752,24 +725,19 @@ contract AllocationManager is
     }
 
     /// @inheritdoc IAllocationManager
-    function isMember(address operator, OperatorSet memory operatorSet) public view returns (bool) {
-        return registeredSets[operator].contains(operatorSet.key());
-    }
-
-    /// @inheritdoc IAllocationManager
     function getCurrentDelegatedAndSlashableOperatorShares(
-        OperatorSet calldata operatorSet,
-        address[] calldata operators,
-        IStrategy[] calldata strategies
+        OperatorSet memory operatorSet,
+        address[] memory operators,
+        IStrategy[] memory strategies
     ) external view returns (uint256[][] memory, uint256[][] memory) {
         return getMinDelegatedAndSlashableOperatorSharesBefore(operatorSet, operators, strategies, uint32(block.number));
     }
 
     /// @inheritdoc IAllocationManager
     function getMinDelegatedAndSlashableOperatorSharesBefore(
-        OperatorSet calldata operatorSet,
-        address[] calldata operators,
-        IStrategy[] calldata strategies,
+        OperatorSet memory operatorSet,
+        address[] memory operators,
+        IStrategy[] memory strategies,
         uint32 beforeBlock
     ) public view returns (uint256[][] memory, uint256[][] memory) {
         require(beforeBlock >= block.number, InvalidBlockNumber());
