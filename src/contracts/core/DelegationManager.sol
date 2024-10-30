@@ -848,7 +848,7 @@ contract DelegationManager is
 
         return (strategies, shares);
     }
-    
+
     /// @inheritdoc IDelegationManager
     function getQueuedWithdrawals(
         address staker
@@ -864,8 +864,7 @@ contract DelegationManager is
         for (uint256 i; i < totalQueued; ++i) {
             withdrawals[i] = queuedWithdrawals[withdrawalRoots[i]];
 
-            uint64[] memory operatorMagnitudes =
-                allocationManager.getMaxMagnitudes(operator, withdrawals[i].strategies);
+            uint64[] memory operatorMagnitudes = allocationManager.getMaxMagnitudes(operator, withdrawals[i].strategies);
 
             for (uint256 j; j < withdrawals[i].strategies.length; ++j) {
                 StakerScalingFactors memory ssf = stakerScalingFactor[staker][withdrawals[i].strategies[j]];
