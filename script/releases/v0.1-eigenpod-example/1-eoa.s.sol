@@ -43,7 +43,7 @@ contract DeployEigenPodAndManager is EOADeployer {
             deployedTo: address(new EigenPod(
                 IETHPOSDeposit(ethPOS),
                 IEigenPodManager(newEigenPodManager), // update EigenPodManager address
-                uint64(vm.envUint("EIGENPOD_GENESIS_TIME"))
+                uint64(vm.envUint("ZEUS_ENV_EIGENPOD_GENESIS_TIME"))
             )),
             singleton: true
         }));
