@@ -276,8 +276,6 @@ contract DelegationManager is
                 sharesToWithdraw: params[i].shares,
                 maxMagnitudes: maxMagnitudes
             });
-
-            pendingWithdrawals[withdrawalRoots[i]] = true;
         }
 
         return withdrawalRoots;
@@ -314,7 +312,7 @@ contract DelegationManager is
         uint256 totalQueued = withdrawalRoots.length();
         numToComplete = numToComplete > totalQueued ? totalQueued : numToComplete;
         for (uint256 i; i < numToComplete; ++i) {
-            _completeQueuedWithdrawal(queuedWithdrawals[withdrawalRoots.at(i)], tokens[i], receiveAsTokens[i]);
+            _completeQueuedWithdrawal(pendingWithdrawals[withdrawalRoots.at(i)].withdrawal, tokens[i], receiveAsTokens[i]);
         }
     }
 
@@ -519,7 +517,7 @@ contract DelegationManager is
         require(tokens.length == withdrawal.strategies.length, InputArrayLengthMismatch());
         require(msg.sender == withdrawal.withdrawer, WithdrawerNotCaller());
         bytes32 withdrawalRoot = calculateWithdrawalRoot(withdrawal);
-        require(pendingWithdrawals[withdrawalRoot], WithdrawalNotQueued());
+        require(pendingWithdrawals[withdrawalRoot].isPending, WithdrawalNotQueued());
 
         uint32 completableBlock = withdrawal.startBlock + MIN_WITHDRAWAL_DELAY_BLOCKS;
         require(completableBlock <= uint32(block.number), WithdrawalDelayNotElapsed());
@@ -560,8 +558,6 @@ contract DelegationManager is
         }
 
         _stakerQueuedWithdrawalRoots[withdrawal.staker].remove(withdrawalRoot);
-
-        delete queuedWithdrawals[withdrawalRoot];
 
         delete pendingWithdrawals[withdrawalRoot];
 
@@ -702,7 +698,10 @@ contract DelegationManager is
 
         _stakerQueuedWithdrawalRoots[staker].add(withdrawalRoot);
 
-        queuedWithdrawals[withdrawalRoot] = withdrawal;
+        pendingWithdrawals[withdrawalRoot] = PendingWithdrawal({
+            isPending: true,
+            withdrawal: withdrawal
+        });
 
         emit SlashingWithdrawalQueued(withdrawalRoot, withdrawal, sharesToWithdraw);
 
@@ -862,7 +861,7 @@ contract DelegationManager is
         address operator = delegatedTo[staker];
 
         for (uint256 i; i < totalQueued; ++i) {
-            withdrawals[i] = queuedWithdrawals[withdrawalRoots[i]];
+            withdrawals[i] = pendingWithdrawals[withdrawalRoots[i]].withdrawal;
 
             uint64[] memory operatorMagnitudes = allocationManager.getMaxMagnitudes(operator, withdrawals[i].strategies);
 

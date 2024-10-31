@@ -88,9 +88,8 @@ abstract contract DelegationManagerStorage is IDelegationManager {
     /// @dev Do not remove, deprecated storage.
     uint256 private __deprecated_minWithdrawalDelayBlocks;
 
-    /// @dev Returns whether a withdrawal is pending for a given `withdrawalRoot`.
-    /// @dev This variable will be deprecated in the future, values should only be read or deleted.
-    mapping(bytes32 withdrawalRoot => bool pending) public pendingWithdrawals;
+    /// @dev Returns whether a withdrawal is pending for a given `withdrawalRoot` and, post slashing, the `Withdrawal` struct.
+    mapping(bytes32 withdrawalRoot => PendingWithdrawal pendingWithdrawal) public pendingWithdrawals;
 
     /// @notice Returns the total number of withdrawals that have been queued for a given `staker`.
     /// @dev This only increments (doesn't decrement), and is used to help ensure that otherwise identical withdrawals have unique hashes.
@@ -111,10 +110,6 @@ abstract contract DelegationManagerStorage is IDelegationManager {
     /// @dev Entrys are removed when the withdrawal is completed.
     /// @dev This variable only reflects withdrawals that were made after the slashing release.
     mapping(address staker => EnumerableSet.Bytes32Set withdrawalRoots) internal _stakerQueuedWithdrawalRoots;
-
-    /// @notice Returns the details of a queued withdrawal for a given `staker` and `withdrawalRoot`.
-    /// @dev This variable only reflects withdrawals that were made after the slashing release.
-    mapping(bytes32 withdrawalRoot => Withdrawal withdrawal) public queuedWithdrawals;
 
     // Construction
 
@@ -137,5 +132,5 @@ abstract contract DelegationManagerStorage is IDelegationManager {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[36] private __gap;
+    uint256[37] private __gap;
 }

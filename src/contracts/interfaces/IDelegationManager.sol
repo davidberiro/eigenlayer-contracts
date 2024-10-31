@@ -149,6 +149,11 @@ interface IDelegationManagerTypes {
         // The address of the withdrawer
         address withdrawer;
     }
+
+    struct PendingWithdrawal {
+        bool isPending;
+        Withdrawal withdrawal;
+    }
 }
 
 interface IDelegationManagerEvents is IDelegationManagerTypes {
