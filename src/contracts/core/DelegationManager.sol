@@ -92,9 +92,9 @@ contract DelegationManager is
 
     /// @inheritdoc IDelegationManager
     function registerAsOperator(
-        OperatorDetails calldata registeringOperatorDetails,
+        OperatorDetails memory registeringOperatorDetails,
         uint32 allocationDelay,
-        string calldata metadataURI
+        string memory metadataURI
     ) external {
         require(!isDelegated(msg.sender), ActivelyDelegated());
 
@@ -111,7 +111,7 @@ contract DelegationManager is
 
     /// @inheritdoc IDelegationManager
     function modifyOperatorDetails(
-        OperatorDetails calldata newOperatorDetails
+        OperatorDetails memory newOperatorDetails
     ) external {
         require(isOperator(msg.sender), OperatorNotRegistered());
         _setOperatorDetails(msg.sender, newOperatorDetails);
@@ -119,7 +119,7 @@ contract DelegationManager is
 
     /// @inheritdoc IDelegationManager
     function updateOperatorMetadataURI(
-        string calldata metadataURI
+        string memory metadataURI
     ) external {
         require(isOperator(msg.sender), OperatorNotRegistered());
         emit OperatorMetadataURIUpdated(msg.sender, metadataURI);
@@ -136,42 +136,6 @@ contract DelegationManager is
 
         // go through the internal delegation flow, checking the `approverSignatureAndExpiry` if applicable
         _delegate(msg.sender, operator, approverSignatureAndExpiry, approverSalt);
-    }
-
-    /// @inheritdoc IDelegationManager
-    function delegateToBySignature(
-        address staker,
-        address operator,
-        SignatureWithExpiry memory stakerSignatureAndExpiry,
-        SignatureWithExpiry memory approverSignatureAndExpiry,
-        bytes32 approverSalt
-    ) external {
-        // check the signature expiry
-        require(stakerSignatureAndExpiry.expiry >= block.timestamp, SignatureExpired());
-        require(!isDelegated(staker), ActivelyDelegated());
-        require(isOperator(operator), OperatorNotRegistered());
-
-        // calculate the digest hash, then increment `staker`'s nonce
-        uint256 currentStakerNonce = stakerNonce[staker];
-
-        // actually check that the signature is valid
-        _checkIsValidSignatureNow({
-            signer: staker,
-            signableDigest: calculateStakerDelegationDigestHash({
-                staker: staker,
-                nonce: currentStakerNonce,
-                operator: operator,
-                expiry: stakerSignatureAndExpiry.expiry
-            }),
-            signature: stakerSignatureAndExpiry.signature
-        });
-
-        unchecked {
-            stakerNonce[staker] = currentStakerNonce + 1;
-        }
-
-        // go through the internal delegation flow, checking the `approverSignatureAndExpiry` if applicable
-        _delegate(staker, operator, approverSignatureAndExpiry, approverSalt);
     }
 
     /// @inheritdoc IDelegationManager
@@ -254,7 +218,7 @@ contract DelegationManager is
 
     /// @inheritdoc IDelegationManager
     function queueWithdrawals(
-        QueuedWithdrawalParams[] calldata params
+        QueuedWithdrawalParams[] memory params
     ) external onlyWhenNotPaused(PAUSED_ENTER_WITHDRAWAL_QUEUE) returns (bytes32[] memory) {
         bytes32[] memory withdrawalRoots = new bytes32[](params.length);
         address operator = delegatedTo[msg.sender];
@@ -282,19 +246,10 @@ contract DelegationManager is
     }
 
     /// @inheritdoc IDelegationManager
-    function completeQueuedWithdrawal(
-        Withdrawal calldata withdrawal,
-        IERC20[] calldata tokens,
-        bool receiveAsTokens
-    ) external onlyWhenNotPaused(PAUSED_EXIT_WITHDRAWAL_QUEUE) nonReentrant {
-        _completeQueuedWithdrawal(withdrawal, tokens, receiveAsTokens);
-    }
-
-    /// @inheritdoc IDelegationManager
     function completeQueuedWithdrawals(
-        Withdrawal[] calldata withdrawals,
-        IERC20[][] calldata tokens,
-        bool[] calldata receiveAsTokens
+        Withdrawal[] memory withdrawals,
+        IERC20[][] memory tokens,
+        bool[] memory receiveAsTokens
     ) external onlyWhenNotPaused(PAUSED_EXIT_WITHDRAWAL_QUEUE) nonReentrant {
         uint256 n = withdrawals.length;
         for (uint256 i; i < n; ++i) {
@@ -304,8 +259,8 @@ contract DelegationManager is
 
     /// @inheritdoc IDelegationManager
     function completeQueuedWithdrawals(
-        IERC20[][] calldata tokens,
-        bool[] calldata receiveAsTokens,
+        IERC20[][] memory tokens,
+        bool[] memory receiveAsTokens,
         uint256 numToComplete
     ) external onlyWhenNotPaused(PAUSED_EXIT_WITHDRAWAL_QUEUE) nonReentrant {
         EnumerableSet.Bytes32Set storage withdrawalRoots = _stakerQueuedWithdrawalRoots[msg.sender];
@@ -392,35 +347,6 @@ contract DelegationManager is
 
     /**
      *
-     *                         BACKWARDS COMPATIBLE LEGACY FUNCTIONS
-     *                         TO BE DEPRECATED IN FUTURE
-     *
-     */
-
-    /// @inheritdoc IDelegationManager
-    function completeQueuedWithdrawal(
-        Withdrawal calldata withdrawal,
-        IERC20[] calldata tokens,
-        uint256 middlewareTimesIndex,
-        bool receiveAsTokens
-    ) external onlyWhenNotPaused(PAUSED_EXIT_WITHDRAWAL_QUEUE) nonReentrant {
-        _completeQueuedWithdrawal(withdrawal, tokens, receiveAsTokens);
-    }
-
-    /// @inheritdoc IDelegationManager
-    function completeQueuedWithdrawals(
-        Withdrawal[] calldata withdrawals,
-        IERC20[][] calldata tokens,
-        uint256[] calldata middlewareTimesIndexes,
-        bool[] calldata receiveAsTokens
-    ) external onlyWhenNotPaused(PAUSED_EXIT_WITHDRAWAL_QUEUE) nonReentrant {
-        for (uint256 i = 0; i < withdrawals.length; ++i) {
-            _completeQueuedWithdrawal(withdrawals[i], tokens[i], receiveAsTokens[i]);
-        }
-    }
-
-    /**
-     *
      *                         INTERNAL FUNCTIONS
      *
      */
@@ -430,7 +356,7 @@ contract DelegationManager is
      * @param operator The account registered as an operator updating their operatorDetails
      * @param newOperatorDetails The new parameters for the operator
      */
-    function _setOperatorDetails(address operator, OperatorDetails calldata newOperatorDetails) internal {
+    function _setOperatorDetails(address operator, OperatorDetails memory newOperatorDetails) internal {
         _operatorDetails[operator] = newOperatorDetails;
         emit OperatorDetailsModified(msg.sender, newOperatorDetails);
     }
@@ -511,7 +437,7 @@ contract DelegationManager is
      */
     function _completeQueuedWithdrawal(
         Withdrawal memory withdrawal,
-        IERC20[] calldata tokens,
+        IERC20[] memory tokens,
         bool receiveAsTokens
     ) internal {
         require(tokens.length == withdrawal.strategies.length, InputArrayLengthMismatch());

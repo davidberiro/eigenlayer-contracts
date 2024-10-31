@@ -275,33 +275,6 @@ interface IDelegationManager is ISignatureUtils, IDelegationManagerErrors, IDele
     ) external;
 
     /**
-     * @notice Caller delegates a staker's stake to an operator with valid signatures from both parties.
-     * @param staker The account delegating stake to an `operator` account
-     * @param operator The account (`staker`) is delegating its assets to for use in serving applications built on EigenLayer.
-     * @param stakerSignatureAndExpiry Signed data from the staker authorizing delegating stake to an operator
-     * @param approverSignatureAndExpiry is a parameter that will be used for verifying that the operator approves of this delegation action in the event that:
-     * @param approverSalt Is a salt used to help guarantee signature uniqueness. Each salt can only be used once by a given approver.
-     *
-     * @dev If `staker` is an EOA, then `stakerSignature` is verified to be a valid ECDSA stakerSignature from `staker`, indicating their intention for this action.
-     * @dev If `staker` is a contract, then `stakerSignature` will be checked according to EIP-1271.
-     * @dev the operator's `delegationApprover` address is set to a non-zero value.
-     * @dev neither the operator nor their `delegationApprover` is the `msg.sender`, since in the event that the operator or their delegationApprover
-     * is the `msg.sender`, then approval is assumed.
-     * @dev This function will revert if the current `block.timestamp` is equal to or exceeds the expiry
-     * @dev In the case that `approverSignatureAndExpiry` is not checked, its content is ignored entirely; it's recommended to use an empty input
-     * in this case to save on complexity + gas costs
-     * @dev If the staker delegating has shares in a strategy that the operator was slashed 100% for (the operator's maxMagnitude = 0),
-     * then delegation is blocked and will revert.
-     */
-    function delegateToBySignature(
-        address staker,
-        address operator,
-        SignatureWithExpiry memory stakerSignatureAndExpiry,
-        SignatureWithExpiry memory approverSignatureAndExpiry,
-        bytes32 approverSalt
-    ) external;
-
-    /**
      * @notice Undelegates the staker from the operator who they are delegated to.
      * Queues withdrawals of all of the staker's withdrawable shares in the StrategyManager (to the staker) and/or EigenPodManager, if necessary.
      * @param staker The account to be undelegated.
@@ -342,23 +315,6 @@ interface IDelegationManager is ISignatureUtils, IDelegationManagerErrors, IDele
         IERC20[][] calldata tokens,
         bool[] calldata receiveAsTokens,
         uint256 numToComplete
-    ) external;
-
-    /**
-     * @notice Used to complete the lastest queued withdrawal.
-     * @param withdrawal The withdrawal to complete.
-     * @param tokens Array in which the i-th entry specifies the `token` input to the 'withdraw' function of the i-th Strategy in the `withdrawal.strategies` array.
-     * @param receiveAsTokens If true, the shares calculated to be withdrawn will be withdrawn from the specified strategies themselves
-     * and sent to the caller, through calls to `withdrawal.strategies[i].withdraw`. If false, then the shares in the specified strategies
-     * will simply be transferred to the caller directly.
-     * @dev beaconChainETHStrategy shares are non-transferrable, so if `receiveAsTokens = false` and `withdrawal.withdrawer != withdrawal.staker`, note that
-     * any beaconChainETHStrategy shares in the `withdrawal` will be _returned to the staker_, rather than transferred to the withdrawer, unlike shares in
-     * any other strategies, which will be transferred to the withdrawer.
-     */
-    function completeQueuedWithdrawal(
-        Withdrawal calldata withdrawal,
-        IERC20[] calldata tokens,
-        bool receiveAsTokens
     ) external;
 
     /**
@@ -425,31 +381,6 @@ interface IDelegationManager is ISignatureUtils, IDelegationManagerErrors, IDele
         IStrategy strategy,
         uint64 previousMaxMagnitude,
         uint64 newMaxMagnitude
-    ) external;
-
-    /**
-     *
-     *                         BACKWARDS COMPATIBLE LEGACY FUNCTIONS
-     *                         TO BE DEPRECATED IN FUTURE
-     *
-     */
-
-    /// @notice Overloaded version of `completeQueuedWithdrawal` that includes a `middlewareTimesIndex` parameter
-    /// for backwards compatibility with the M2 release. To be deprecated in a future release.
-    function completeQueuedWithdrawal(
-        Withdrawal calldata withdrawal,
-        IERC20[] calldata tokens,
-        uint256 middlewareTimesIndex,
-        bool receiveAsTokens
-    ) external;
-
-    /// @notice Overloaded version of `completeQueuedWithdrawals` that includes a `middlewareTimesIndexes` parameter
-    /// for backwards compatibility with the M2 release. To be deprecated in a future release.
-    function completeQueuedWithdrawals(
-        Withdrawal[] calldata withdrawals,
-        IERC20[][] calldata tokens,
-        uint256[] calldata middlewareTimesIndexes,
-        bool[] calldata receiveAsTokens
     ) external;
 
     /**
