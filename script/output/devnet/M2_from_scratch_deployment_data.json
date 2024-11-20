@@ -1,33 +1,46 @@
 {
   "addresses": {
-    "avsDirectory": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
-    "avsDirectoryImplementation": "0x9A676e781A523b5d0C0e43731313A708CB607508",
-    "baseStrategyImplementation": "0x7a2088a1bFc9d81c55368AE168C2C02570cB814F",
-    "delayedWithdrawalRouter": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
-    "delayedWithdrawalRouterImplementation": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE",
-    "delegation": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
-    "delegationImplementation": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
-    "eigenLayerPauserReg": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
-    "eigenLayerProxyAdmin": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-    "eigenPodBeacon": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
-    "eigenPodImplementation": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
-    "eigenPodManager": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
-    "eigenPodManagerImplementation": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
-    "emptyContract": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-    "rewardsCoordinator": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
-    "rewardsCoordinatorImplementation": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed",
-    "slasher": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
-    "slasherImplementation": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
-    "strategies": "",
-    "strategyManager": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
-    "strategyManagerImplementation": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
+    "allocationManager": "0xEFe230446Eb6EC3cf50cE2Fb0F1695262A1aC3a8",
+    "allocationManagerImplementation": "0xBb980Ef7E7C3CB29A969c7110920be28456BB6Af",
+    "avsDirectory": "0xdD046Ca34B257560fbbdAd9Ce8c33413052E64BE",
+    "avsDirectoryImplementation": "0xbdB0760311B5a24f9586f8b4fAD1f8e870D33CFb",
+    "baseStrategyImplementation": "0x182B5f2671F3B6c03764524145D1c1f46fB4963F",
+    "delegationManager": "0xdf27486b0D8E3458f0Ed53e805083C336214D389",
+    "delegationManagerImplementation": "0x1cDcc8AE9B393d0619801BE9B14aABed0E5F5770",
+    "eigenLayerPauserReg": "0x4Bbbd491a058F4b0AFe3FcB597d9F68a035D433b",
+    "eigenLayerProxyAdmin": "0x6Cb8d3575258f9b729d5D9F8585F4fa71cB32AB5",
+    "eigenPodBeacon": "0x5d55B2AF99846D4ed43C4C5fff2a94146683A056",
+    "eigenPodImplementation": "0x5E62F495B8f6cd73ddec5fcB2d35403eb3340AdC",
+    "eigenPodManager": "0xD3A3124d632Ea61BeB25A4B70C44748908d25AFE",
+    "eigenPodManagerImplementation": "0x7a96613b873247A36E19E56314ed828311A6B2B7",
+    "emptyContract": "0xCF65CbCC557aa6DB4856674a663eef39DC2ECf9C",
+    "numStrategiesDeployed": 0,
+    "rewardsCoordinator": "0x7Feb48FD9C91ae99f59F8Dc7c31430b9bBE4C039",
+    "rewardsCoordinatorImplementation": "0xFBeC09528e42D8251f0a1D92Ae53258F1ec0D8B9",
+    "strategies": {
+      "WETH": "0x593fF7B7669E1f69a5a967dcfAbf64216E060294"
+    },
+    "strategyManager": "0x1d5166734279f77E9228244D7c6abf44eb0A6f64",
+    "strategyManagerImplementation": "0xC8094DAd828558Fec4048088C097Ed0C9Ad60770",
+    "token": {
+      "tokenProxyAdmin": "0x0000000000000000000000000000000000000000",
+      "EIGEN": "0x0000000000000000000000000000000000000000",
+      "bEIGEN": "0x0000000000000000000000000000000000000000",
+      "EIGENImpl": "0x0000000000000000000000000000000000000000",
+      "bEIGENImpl": "0x0000000000000000000000000000000000000000",
+      "eigenStrategy": "0x0000000000000000000000000000000000000000",
+      "eigenStrategyImpl": "0x0000000000000000000000000000000000000000"
+    }
   },
   "chainInfo": {
-    "chainId": 31337,
-    "deploymentBlock": 0
+    "chainId": 17000,
+    "deploymentBlock": 2779700
   },
   "parameters": {
+    "communityMultisig": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     "executorMultisig": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    "operationsMultisig": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    "operationsMultisig": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "pauserMultisig": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "timelock": "0x0000000000000000000000000000000000000000"
   }
 }
