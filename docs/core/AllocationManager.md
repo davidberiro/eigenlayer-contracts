@@ -16,9 +16,9 @@ The AllocationManager contract manages the allocation and reallocation of operat
 - `DEALLOCATION_DELAY`: The delay in seconds before deallocations take effect.
     - Mainnet: `17.5 days`. Slightly TBD
     - Testnet: `3 days`. Very TBD
-    - Public Devnet: `1 days` 
+    - Public Devnet: `1 days`
 
-## `setAllocationDelay` 
+## `setAllocationDelay`
 
 ```solidity
 /**
@@ -27,8 +27,9 @@ The AllocationManager contract manages the allocation and reallocation of operat
  * @param delay The allocation delay in seconds.
  */
 function setAllocationDelay(address operator, uint32 delay) external;
+```
 
-These functions allow operators to set their allocation delay. The first variant is called by the DelegationManager upon operator registration for all new operators created after the slashing release. The second variant is called by operators themselves to update their allocation delay or set it for the first time if they joined before the slashing release.
+This function allows operators to set their allocation delay. The first variant is called by the DelegationManager upon operator registration for all new operators created after the slashing release. The second variant is called by operators themselves to update their allocation delay or set it for the first time if they joined before the slashing release.
 
 The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` seconds.
 
@@ -66,7 +67,7 @@ This function is called by operators to adjust the proportions of their slashabl
 
 The operator provides their expected max magnitude for each strategy they're adjusting the allocation for. This is used to combat race conditions with slashings for the strategy, which may result in larger than expected slashable proportions allocated to operator sets.
 
-Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input. 
+Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input.
 
 The contract keeps track of the total magnitude in pending allocations, active allocations, and pending deallocations. This is called the **_encumbered magnitude_** for a strategy. The contract verifies that the allocations made in this call do not make the encumbered magnitude exceed the operator's max magnitude for the strategy. If the encumbered magnitude exceeds the max magnitude, the function reverts.
 
@@ -94,7 +95,7 @@ function clearDeallocationQueue(
 ) external;
 ```
 
-This function is used to complete pending deallocations for a list of strategies for an operator. The function takes a list of strategies and the number of pending deallocations to complete for each strategy. For each strategy, the function completes pending deallocations if their effect timestamps have passed. 
+This function is used to complete pending deallocations for a list of strategies for an operator. The function takes a list of strategies and the number of pending deallocations to complete for each strategy. For each strategy, the function completes pending deallocations if their effect timestamps have passed.
 
 Completing a deallocation decreases the encumbered magnitude for the strategy, allowing them to make allocations with that magnitude. Encumbered magnitude must be decreased only upon completion because pending deallocations can be slashed before they are completable.
 
@@ -141,13 +142,13 @@ Slashing is instant and irreversable. Slashed funds remain unrecoverable in the 
 
 Slashing updates storage in a way that instantly updates all view functions to reflect the correct values.
 
-## View Functions 
+## View Functions
 
 ### `getMinDelegatedAndSlashableOperatorSharesBefore`
 
 ```solidity
 /**
- * @notice returns the minimum operatorShares and the slashableOperatorShares for an operator, list of strategies, 
+ * @notice returns the minimum operatorShares and the slashableOperatorShares for an operator, list of strategies,
  * and an operatorSet before a given timestamp. This is used to get the shares to weight operators by given ones slashing window.
  * @param operatorSet the operatorSet to get the shares for
  * @param operators the operators to get the shares for
