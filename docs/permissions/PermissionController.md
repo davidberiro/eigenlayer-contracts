@@ -4,7 +4,7 @@
 | -------- | -------- | -------- |
 | [`PermissionController.sol`](../../src/contracts/permissions/PermissionController.sol) | Singleton | Transparent proxy |
 
-The `PermissionController` handles user permissions. An "account" refers to an address.
+The `PermissionController` handles user permissions for protocol contracts which explicitly integrate it. Note that "users" in the context of the `PermissionController` refers to **AVSs** and **Operators**; it does *not* refer to **Stakers**.
 
 The `PermissionController` defines three different roles:
 * [Accounts](#accounts)
@@ -22,7 +22,7 @@ Note that the `AVSDirectory` will soon be deprecated and thus does not support t
 
 ## Accounts
 
-Accounts refer to the Ethereum address through which one interacts with the protocol. Accounts have the ability to set and remove admins and/or appointees, which can take actions on an account's behalf depending on their role.
+**Accounts** refer to the Ethereum address through which one interacts with the protocol. Accounts have the ability to set and remove **admins** and/or **appointees**, which can take actions on an account's behalf depending on their role.
 
 Note that an account cannot appoint an address to *register* on its behalf. In other words, the address a user registers with is their account, and they can then transfer admin of that account in a subsequent tx. Similarly, the account of an AVS is the address they use to initialize state in the `AllocationManager`.
 
@@ -49,11 +49,11 @@ These structs are then stored within a mapping defined as follows, allowing for 
 mapping(address account => AccountPermissions) internal _permissions;
 ```
 
-By default, no other address can perform an action on behalf of a given account. However, accounts can add admins and/opr appointees to give other addresses the ability to act on their behalf.
+By default, no other address can perform an action on behalf of a given account. However, accounts can add admins and/or appointees to give other addresses the ability to act on their behalf.
 
 ## Admins
 
-Admins are able to take any action on behalf of an original account -- including adding or removing admins. This enables key rotation for operators, or creating a backup admin which is stored on a cold key.
+Admins are able to take any action on behalf of an original account -- including adding or removing admins. This enables operations like key rotation for operators, or creating a backup admin which is stored on a cold key.
 
 ### Adding an Admin
 
@@ -122,7 +122,7 @@ Note that an account has successfully added an admin (i.e. the pending admin has
 function removeAdmin(address account, address admin) external onlyAdmin(account);
 ```
 
-An admin of an account can call `removeAdmin()` to remove any other admins of the same account. However, one admin must always remain for any given account. In other words, once an account has added an admin, it will always have at least one admin in perpetuity.
+An admin of an account can call `removeAdmin()` to remove any other admins of the same account. However, one admin must always remain for any given account. In other words, once an account has added an admin, it must always have at least one admin in perpetuity.
 
 Note that once an admin has been added to an account, at least one must remain on the account.
 
@@ -137,7 +137,11 @@ Note that once an admin has been added to an account, at least one must remain o
 
 ## Appointees
 
-Appointees are able to act as another account *for a specific function or set of functions for a specific contract*, granting accounts granular access control.
+Appointees are able to act as another account *for a specific function for a specific contract*, granting accounts granular access control.
+
+Specifically, an account (or its admins) can grant an appointee access to a specific `selector` (i.e [function](https://solidity-by-example.org/function-selector/)) on a given `target` (i.e. contract). The `target` and `selector` are combined in the form of the `targetSelector` and serve to uniquely identify a permissioned function.
+
+Appointees can be appointed more than once so that they can access additional functions on a given contract and/or additional functions on *other* contracts. Each new `targetSelector` permission granted requires setting the appointee from scratch, and revoking the appointee's permission requires revoking each individual `targetSelector` permission, as described below.
 
 ### Adding an Appointee
 
@@ -153,8 +157,6 @@ function setAppointee(
 ```
 
 An account (or its admins) can call `setAppointee()` to give another address the ability to call a specific function on a given contract. That address is then only able to call that specific function on that specific contract.
-
-The `target` refers to the contract, and the `selector` to the function selector. Combined, these are the `targetSelector` and uniquely identify a permissioned function.
 
 *Effects*:
 * The `targetSelector` is added to the specified `appointee` set within the  `appointeePermissions` mapping
@@ -188,3 +190,33 @@ Similarly, an account (or its admins) can call `removeAppointee()` to remove tha
 *Requirements*:
 * Caller MUST be an admin for the account, or the account's address itself if no admin is set
 * The proposed appointee MUST already have permissions for the given `targetSelector`
+
+---
+
+## Functions using the PermissionController
+
+Below are the functions for which the PermissionController can be used to specify access controls.
+
+### DelegationManager
+
+* [`modifyOperatorDetails`](../core/DelegationManager.md#modifyOperatorDetails)
+* [`updateOperatorMetadataURI`](../core/DelegationManager.md#updateOperatorMetadataURI)
+* [`undelegate`](../core/DelegationManager.md#undelegate)
+
+### AllocationManager
+
+* [`slashOperator`](../core/AllocationManager.md#slashOperator)
+* [`modifyAllocations`](../core/AllocationManager.md#modifyAllocations)
+* [`registerForOperatorSets`](../core/AllocationManager.md#registerForOperatorSets)
+* [`deregisterFromOperatorSets`](../core/AllocationManager.md#deregisterFromOperatorSets)
+* [`setAllocationDelay`](../core/AllocationManager.md#setAllocationDelay)
+* [`setAVSRegistrar`](../core/AllocationManager.md#setAVSRegistrar)
+* [`updateAVSMetadataURI`](../core/AllocationManager.md#updateAVSMetadataURI)
+* [`createOperatorSets`](../core/AllocationManager.md#createOperatorSets)
+* [`addStrategiesToOperatorSet`](../core/AllocationManager.md#addStrategiesToOperatorSet)
+* [`removeStrategiesFromOperatorSet`](../core/AllocationManager.md#removeStrategiesFromOperatorSet)
+
+### RewardsCoordinator
+
+* [`createAVSRewardsSubmission`](../core/RewardsCoordinator.md#createAVSRewardsSubmission)
+* [`setClaimerFor`](../core/RewardsCoordinator.md#setClaimerFor)
