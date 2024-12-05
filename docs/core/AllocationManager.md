@@ -1,43 +1,126 @@
 # AllocationManager
 
+| File | Type | Proxy |
+| -------- | -------- | -------- |
+| [`AllocationManager.sol`](../../src/contracts/core/AllocationManager.sol) | Singleton | Transparent proxy |
+
 ## Prerequisites
 
 - [The Mechanics of Allocating and Slashing Unique Stake](https://forum.eigenlayer.xyz/t/the-mechanics-of-allocating-and-slashing-unique-stake/13870)
 
 ## Overview
-The AllocationManager contract manages the allocation and reallocation of operators' slashable stake across various strategies and operator sets. It enforces allocation and deallocation delays and handles the slashing process initiated by AVSs.
+
+The AllocationManager contract manages the allocation and slashing of operators' slashable stake across various strategies and operator sets. It also enforces allocation and deallocation delays and handles the slashing process initiated by AVSs.
 
 ## Parameterization
 
-- `ALLOCATION_CONFIGURATION_DELAY`: The delay in seconds before allocations take effect.
+- `ALLOCATION_CONFIGURATION_DELAY`: The delay in blocks (estimated) before allocations take effect.
+<!-- TODO: remove these "Very TBD" etc statements and get clarity here -->
     - Mainnet: `21 days`. Very TBD
-    - Testnet: `1 hour`. Very TBD
+    - Testnet: `1 hours`. Very TBD
     - Public Devnet: `10 minutes`
-- `DEALLOCATION_DELAY`: The delay in seconds before deallocations take effect.
+- `DEALLOCATION_DELAY`: The delay in blocks (estimated) before deallocations take effect.
     - Mainnet: `17.5 days`. Slightly TBD
     - Testnet: `3 days`. Very TBD
     - Public Devnet: `1 days`
 
-## `setAllocationDelay`
+## Roles
+
+Two types of users interact directly with the AllocationManager:
+* [Operators](#operators)
+* [AVSs](#avss)
+
+---
+
+## Operators
+
+Operators interact with the AllocationManager to join operator sets, modify their allocations of slashable stake, and change their allocation delay.
+
+### Operator Sets
+
+An operator set is defined as below:
+
+```solidity
+struct OperatorSet {
+    address avs;
+    uint32 id;
+}
+```
+
+Every `operatorSet` corresponds to a single AVS, as indicated by the `avs` parameter. Each `operatorSet` is then given a specific `id` upon creation, which must be unique per `avs`. Together, the `avs` and `id` form the `key` that uniquely identifies a given `operatorSet`.
+
+Operator registrations are tracked with the struct defined below:
 
 ```solidity
 /**
- * @notice Called by operators or the delegation manager to set their allocation delay.
- * @param operator The operator to set the delay on behalf of.
- * @param delay The allocation delay in seconds.
- */
-function setAllocationDelay(address operator, uint32 delay) external;
+* @notice Parameters used to register for an AVS's operator sets
+* @param avs the AVS being registered for
+* @param operatorSetIds the operator sets within the AVS to register for
+* @param data extra data to be passed to the AVS to complete registration
+*/
+struct RegisterParams {
+    address avs;
+    uint32[] operatorSetIds;
+    bytes data;
+}
 ```
 
-This function allows operators to set their allocation delay. The first variant is called by the DelegationManager upon operator registration for all new operators created after the slashing release. The second variant is called by operators themselves to update their allocation delay or set it for the first time if they joined before the slashing release.
+The registration for an operator as part of a given operator set is captured with the below struct:
 
-The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` seconds.
+```solidity
+/**
+* @notice Contains registration details for an operator pertaining to an operator set
+* @param registered Whether the operator is currently registered for the operator set
+* @param registeredUntil If the operator is not registered, how long until the operator is no longer
+* slashable by the AVS.
+*/
+struct RegistrationStatus {
+    bool registered;
+    uint32 registeredUntil;
+}
+```
 
-The allocation delay can be any positive uint32.
+This data is split across two different mappings:
 
-The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with.
+```solidity
+/// @dev Lists the operator sets the operator is registered for. Note that an operator
+/// can be registered without allocated stake. Likewise, an operator can allocate
+/// without being registered.
+mapping(address operator => EnumerableSet.Bytes32Set) internal registeredSets;
 
-## `modifyAllocations`
+/// @dev Contains the operator's registration status for an operator set.
+mapping(address operator => mapping(bytes32 operatorSetKey => RegistrationStatus)) internal registrationStatus;
+```
+
+#### `registerForOperatorSets`
+
+```solidity
+function registerForOperatorSets(
+    address operator,
+    RegisterParams calldata params
+)
+external
+onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
+checkCanCall(operator);
+```
+
+*Effects*:
+* The proposed operator sets are added to the operator's list of registered sets
+* The operator is marked as registered for the given operator sets
+
+*Requirements*:
+* Address MUST be registered as an operator
+* Caller MUST be the operator
+  * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+* Function MUST NOT be paused
+* Proposed operator sets MUST be registered for a given AVS
+* Operator MUST NOT be registered for any given operator sets
+
+#### `deregisterFromOperatorSets`
+
+### Modify Allocations
+
+#### `modifyAllocations`
 
 ```solidity
 /**
@@ -75,7 +158,7 @@ Any _allocations_ (i.e. increases in the proportion of slashable stake allocated
 
 Any _deallocations_ (i.e. decreases in the proportion of slashable stake allocated to an AVS) take effect after `DEALLOCATION_DELAY` seconds. This enables AVSs enough time to update their view of stakes to the new proportions and have any tasks created against previous stakes to expire.
 
-## `clearDeallocationQueue`
+#### `clearDeallocationQueue`
 
 ```solidity
 /**
@@ -99,7 +182,52 @@ This function is used to complete pending deallocations for a list of strategies
 
 Completing a deallocation decreases the encumbered magnitude for the strategy, allowing them to make allocations with that magnitude. Encumbered magnitude must be decreased only upon completion because pending deallocations can be slashed before they are completable.
 
-## `slashOperator`
+### Changing Allocation Delays
+
+#### `setAllocationDelay`
+
+```solidity
+/**
+ * @notice Called by operators or the delegation manager to set their allocation delay.
+ * @param operator The operator to set the delay on behalf of.
+ * @param delay The allocation delay in seconds.
+ */
+function setAllocationDelay(address operator, uint32 delay) external;
+```
+
+This function sets an operator's allocation delay.
+
+The DelegationManager calls this upon operator registration for all new operators created after the slashing release. Operators can also update their allocation delay, or set it for the first time if they joined before the slashing release.
+
+The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` seconds.
+
+The allocation delay can be any `uint32`, including 0.
+
+The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with.
+
+*Effects*:
+* Set the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
+  * `effectBlock = uint32(block.number) + ALLOCATION_CONFIGURATION_DELAY`
+* If the operator has a `pendingDelay`, and if the `effectBlock` has passed, set the operator's `delay` to the `pendingDelay` value
+  * This also sets the `isSet` boolean to `true` to indicate that the operator's `delay`, even if 0, was set intentionally
+* Emit an `AllocationDelaySet` event with the `operator`, new pending `delay`, and `effectBlock` at which the `pendingDelay` can be activated
+
+*Requirements*:
+* Caller MUST BE either the DelegationManager, or an existing operator
+  * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+
+## AVSs
+
+### Administrating Operator Sets
+
+#### `createOperatorSets`
+#### `addStrategiesToOperatorSet`
+#### `removeStrategiesFromOperatorSet`
+#### `setAVSRegistrar`
+
+### Slashing Operators
+
+#### `slashOperator`
 
 ```solidity
 /**
@@ -141,6 +269,8 @@ This function is called by AVSs to slash an operator for a given operator set an
 Slashing is instant and irreversable. Slashed funds remain unrecoverable in the protocol but will be burned/redistributed in a future release. Slashing by one operatorSet does not effect the slashable stake allocation of other operatorSets for the same operator and strategy.
 
 Slashing updates storage in a way that instantly updates all view functions to reflect the correct values.
+
+------
 
 ## View Functions
 
