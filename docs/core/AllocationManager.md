@@ -73,11 +73,11 @@ The below struct captures the registration status for an operator regarding a gi
 
 ```solidity
 /**
-* @notice Contains registration details for an operator pertaining to an operator set
-* @param registered Whether the operator is currently registered for the operator set
-* @param registeredUntil If the operator is not registered, how long until the operator is no longer
-* slashable by the AVS.
-*/
+ * @notice Contains registration details for an operator pertaining to an operator set
+ * @param registered Whether the operator is currently registered for the operator set
+ * @param registeredUntil If the operator is not registered, how long until the operator is no longer
+ * slashable by the AVS.
+ */
 struct RegistrationStatus {
     bool registered;
     uint32 registeredUntil;
@@ -115,11 +115,11 @@ An operator may call this function to register for any number of operator sets o
 
 ```solidity
 /**
-* @notice Parameters used to register for an AVS's operator sets
-* @param avs the AVS being registered for
-* @param operatorSetIds the operator sets within the AVS to register for
-* @param data extra data to be passed to the AVS to complete registration
-*/
+ * @notice Parameters used to register for an AVS's operator sets
+ * @param avs the AVS being registered for
+ * @param operatorSetIds the operator sets within the AVS to register for
+ * @param data extra data to be passed to the AVS to complete registration
+ */
 struct RegisterParams {
     address avs;
     uint32[] operatorSetIds;
@@ -142,6 +142,7 @@ The `data` is arbitrary information passed onto the AVS's specific `AVSRegistrar
   * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
 * Each operator set ID MUST exist for the given AVS
 * Operator MUST NOT already be registered for any proposed operator sets
+* If operator has deregistered, operator MUST NOT be slashable anymore (i.e. the `DEALLOCATION_DELAY` must have passed)
 * The AVS's `AVSRegistrar` MUST NOT revert
 <!-- There is no explict check that the AVS exists -- presumably captured by checking that the opeartor set ID exists for the AVS? -->
 
@@ -176,35 +177,21 @@ Operators may desire to deregister from operator sets; this function generally i
 
 ### Allocation Modifications
 
+Operator registration is one step of preparing to participate in an AVS. Typically, an AVS will also expect operators to allocate slashable stake, such that the AVS has some economic security.
+
 #### `modifyAllocations`
 
 ```solidity
-/**
- * @notice struct used to modify the allocation of slashable magnitude to list of operatorSets
- * @param strategy the strategy to allocate magnitude for
- * @param expectedMaxMagnitude the expected max magnitude of the operator used to combat against race conditions with slashing
- * @param operatorSets the operatorSets to allocate magnitude for
- * @param magnitudes the magnitudes to allocate for each operatorSet
- */
-struct MagnitudeAllocation {
-    IStrategy strategy;
-    uint64 expectedMaxMagnitude;
-    OperatorSet[] operatorSets;
-    uint64[] magnitudes;
-}
-
 /**
  * @notice Modifies the propotions of slashable stake allocated to a list of operatorSets for a set of strategies
  * @param allocations array of magnitude adjustments for multiple strategies and corresponding operator sets
  * @dev Updates encumberedMagnitude for the updated strategies
  * @dev msg.sender is used as operator
  */
-function modifyAllocations(MagnitudeAllocation[] calldata allocations) external
+function modifyAllocations(AllocateParams[] calldata allocations) external onlyWhenNotPaused(PAUSED_MODIFY_ALLOCATIONS)
 ```
 
 This function is called by operators to adjust the proportions of their slashable stake allocated to different operator sets for different strategies.
-
-The operator provides their expected max magnitude for each strategy they're adjusting the allocation for. This is used to combat race conditions with slashings for the strategy, which may result in larger than expected slashable proportions allocated to operator sets.
 
 Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input.
 
@@ -213,6 +200,36 @@ The contract keeps track of the total magnitude in pending allocations, active a
 Any _allocations_ (i.e. increases in the proportion of slashable stake allocated to an AVS) take effect after the operator's allocation delay. The allocation delay must be set for the operator before they can call this function.
 
 Any _deallocations_ (i.e. decreases in the proportion of slashable stake allocated to an AVS) take effect after `DEALLOCATION_DELAY` seconds. This enables AVSs enough time to update their view of stakes to the new proportions and have any tasks created against previous stakes to expire.
+
+```solidity
+/**
+ * @notice struct used to modify the allocation of slashable magnitude to an operator set
+ * @param operatorSet the operator set to modify the allocation for
+ * @param strategies the strategies to modify allocations for
+ * @param newMagnitudes the new magnitude to allocate for each strategy to this operator set
+ */
+struct AllocateParams {
+    OperatorSet operatorSet;
+    IStrategy[] strategies;
+    uint64[] newMagnitudes;
+}
+```
+
+*Effects*:
+* Pending eligible deallocations are cleared for each strategy
+* Events emitted:
+  * `EncumberedMagnitudeUpdated`
+  * `AllocationUpdated`
+
+*Requirements*:
+* Allocation modifications MUST NOT be paused
+* Caller MUST be authorized, either as the operator or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
+* Operator MUST have already set an allocation delay
+* Provided strategies MUST be of equal length to provided magnitudes for a given `AllocateParams` object
+  * This is to ensure that every strategy has a specified magnitude to allocate
+* Operator set MUST exist for each specified AVS
+* Operator MUST NOT have pending modifications for any given strategy
+* New magnitudes MUST NOT match existing ones
 
 #### `clearDeallocationQueue`
 
