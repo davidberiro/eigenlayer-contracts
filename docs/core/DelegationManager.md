@@ -4,13 +4,13 @@
 | -------- | -------- | -------- |
 | [`DelegationManager.sol`](../../src/contracts/core/DelegationManager.sol) | Singleton | Transparent proxy |
 
-The primary functions of the `DelegationManager` are (i) to allow Stakers to delegate to Operators, (ii) allow Stakers to be undelegated from Operators, and (iii) handle withdrawals and withdrawal processing for shares in both the `StrategyManager` and `EigenPodManager`.
+The primary functions of the `DelegationManager` are (i) to allow Stakers to delegate/undelegate to/from Operators, (ii) handle withdrawals and withdrawal processing for assets in both the `StrategyManager` and `EigenPodManager`, and (iii) to manage accounting around slashing for Stakers and Operators.
 
-Whereas the `EigenPodManager` and `StrategyManager` perform accounting for individual Stakers according to their native ETH or LST holdings respectively, the `DelegationManager` sits between these two contracts and tracks these accounting changes according to the Operators each Staker has delegated to. 
+The `DelegationManager` is the intersection between the two sides of the protocol:
+* It handles share burning directives sent by the `AllocationManager` when Operators are slashed by AVSs.
+* It tracks share/delegation accounting changes when Stakers deposit assets using the `StrategyManager` and `EigenPodManager` (or withdraw them via the `DelegationManager`).
 
-This means that each time a Staker's balance changes in either the `EigenPodManager` or `StrategyManager`, the `DelegationManager` is called to record this update to the Staker's delegated Operator (if they have one). For example, if a Staker is delegated to an Operator and deposits into a strategy, the `StrategyManager` will call the `DelegationManager` to update the Operator's delegated shares for that strategy.
-
-Additionally, whether a Staker is delegated to an Operator or not, the `DelegationManager` is how a Staker queues (and later completes) a withdrawal.
+Whether a Staker is currently delegated to an Operator or not, the `DelegationManager` keeps track of a Staker's "deposit scaling factor." This value allows the `DelegationManager` to account for slashing, serving as the primary conversion vehicle between a Staker's raw deposited assets and the amount they can actually delegate or withdraw. See (TODO: Slashing Accounting Doc) for details.
 
 #### High-level Concepts
 
@@ -23,21 +23,53 @@ This document organizes methods according to the following themes (click each to
 
 #### Important state variables
 
-* `mapping(address => address) public delegatedTo`: Staker => Operator.
-    * If a Staker is not delegated to anyone, `delegatedTo` is unset.
-    * Operators are delegated to themselves - `delegatedTo[operator] == operator`
-* `mapping(address => mapping(IStrategy => uint256)) public operatorShares`: Tracks the current balance of shares an Operator is delegated according to each strategy. Updated by both the `StrategyManager` and `EigenPodManager` when a Staker's delegatable balance changes.
-    * Because Operators are delegated to themselves, an Operator's own restaked assets are reflected in these balances.
-    * A similar mapping exists in the `StrategyManager`, but the `DelegationManager` additionally tracks beacon chain ETH delegated via the `EigenPodManager`. The "beacon chain ETH" strategy gets its own special address for this mapping: `0xbeaC0eeEeeeeEEeEeEEEEeeEEeEeeeEeeEEBEaC0`.
-* `uint256 public minWithdrawalDelayBlocks`:
-    * As of M2, this is 50400 (roughly 1 week)
-    * For all strategies including native beacon chain ETH, Stakers at minimum must wait this amount of time before a withdrawal can be completed.
-    To withdraw a specific strategy, it may require additional time depending on the strategy's withdrawal delay. See `strategyWithdrawalDelayBlocks` below.
-* `mapping(IStrategy => uint256) public strategyWithdrawalDelayBlocks`:
-    * This mapping tracks the withdrawal delay for each strategy. This mapping value only comes into affect
-    if `strategyWithdrawalDelayBlocks[strategy] > minWithdrawalDelayBlocks`. Otherwise, `minWithdrawalDelayBlocks` is used.
-* `mapping(bytes32 => bool) public pendingWithdrawals;`:
-    * `Withdrawals` are hashed and set to `true` in this mapping when a withdrawal is initiated. The hash is set to false again when the withdrawal is completed. A per-staker nonce provides a way to distinguish multiple otherwise-identical withdrawals.
+*Delegation and Share Accounting:*
+
+```solidity
+/// @notice Returns the `operator` a `staker` is delgated to, or address(0) if not delegated.
+/// Note: operators are delegated to themselves
+mapping(address staker => address operator) public delegatedTo;
+
+/**
+ * @notice Tracks the current balance of shares an `operator` is delegated according to each `strategy`. 
+ * Updated by both the `StrategyManager` and `EigenPodManager` when a staker's delegatable balance changes,
+ * and by the `AllocationManager` when the `operator` is slashed.
+ *
+ * @dev The following invariant should hold for each `strategy`:
+ *
+ * operatorShares[operator] = sum(withdrawable shares of all stakers delegated to operator)
+ */
+mapping(address operator => mapping(IStrategy strategy => uint256 shares)) public operatorShares;
+
+/// @notice Returns the scaling factor applied to a `staker` for a given `strategy`
+mapping(address staker => mapping(IStrategy strategy => DepositScalingFactor)) internal _depositScalingFactor;
+```
+
+*Withdrawal Processing:*
+
+
+```solidity
+/// @dev Returns whether a withdrawal is pending for a given `withdrawalRoot`.
+/// @dev This variable will be deprecated in the future, values should only be read or deleted.
+mapping(bytes32 withdrawalRoot => bool pending) public pendingWithdrawals;
+
+/// @notice Returns a list of queued withdrawals for a given `staker`.
+/// @dev Entrys are removed when the withdrawal is completed.
+/// @dev This variable only reflects withdrawals that were made after the slashing release.
+mapping(address staker => EnumerableSet.Bytes32Set withdrawalRoots) internal _stakerQueuedWithdrawalRoots;
+
+/// @notice Returns the details of a queued withdrawal for a given `staker` and `withdrawalRoot`.
+/// @dev This variable only reflects withdrawals that were made after the slashing release.
+mapping(bytes32 withdrawalRoot => Withdrawal withdrawal) public queuedWithdrawals;
+
+/// @notice Contains history of the total cumulative staker withdrawals for an operator and a given strategy.
+/// Used to calculate burned StrategyManager shares when an operator is slashed.
+/// @dev Stores scaledShares instead of total withdrawn shares to track current slashable shares, dependent on the maxMagnitude
+mapping(address operator => mapping(IStrategy strategy => Snapshots.DefaultZeroHistory)) internal
+    _cumulativeScaledSharesHistory;
+```
+
+<!-- * A similar mapping exists in the `StrategyManager`, but the `DelegationManager` additionally tracks beacon chain ETH delegated via the `EigenPodManager`. The "beacon chain ETH" strategy gets its own special address for this mapping: `0xbeaC0eeEeeeeEEeEeEEEEeeEEeEeeeEeeEEBEaC0`. -->
 
 #### Helpful definitions
 

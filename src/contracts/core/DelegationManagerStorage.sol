@@ -58,19 +58,21 @@ abstract contract DelegationManagerStorage is IDelegationManager {
     bytes32 internal __deprecated_DOMAIN_SEPARATOR;
 
     /**
-     * @notice Returns the total number of shares owned by an `operator` for a given `strategy`.
+     * @notice Tracks the current balance of shares an `operator` is delegated according to each `strategy`.
+     * Updated by both the `StrategyManager` and `EigenPodManager` when a staker's delegatable balance changes,
+     * and by the `AllocationManager` when the `operator` is slashed.
      *
-     * @dev By design, the following invariant should hold for each Strategy:
+     * @dev The following invariant should hold for each `strategy`:
      *
-     * (operator's delegatedShares in delegation manager) = sum (delegatedShares above zero of all stakers delegated to operator)
-     * = sum (delegateable delegatedShares of all stakers delegated to the operator)
+     * operatorShares[operator] = sum(withdrawable shares of all stakers delegated to operator)
      */
     mapping(address operator => mapping(IStrategy strategy => uint256 shares)) public operatorShares;
 
     /// @notice Returns the operator details for a given `operator`.
     mapping(address operator => OperatorDetails) internal _operatorDetails;
 
-    /// @notice Returns the `operator` a `staker` is delgated to, address(0) if not delegated.
+    /// @notice Returns the `operator` a `staker` is delgated to, or address(0) if not delegated.
+    /// Note: operators are delegated to themselves
     mapping(address staker => address operator) public delegatedTo;
 
     /// @notice Do not remove, deprecated storage.
