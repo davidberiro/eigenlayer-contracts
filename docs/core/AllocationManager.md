@@ -33,6 +33,8 @@ Operators interact with the AllocationManager to join operator sets, modify thei
 
 ### Operator Sets
 
+Operator sets, as described in [Introducing the EigenLayer Security Model](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/), are useful for AVSs to configure operator groupings which can be assigned different tasks, rewarded based on their strategy allocations, and slashed according to different rules.
+
 An operator set is defined as below:
 
 ```solidity
@@ -55,6 +57,7 @@ All members of an operator set are stored in the below mapping:
 /// @dev Lists the members of an AVS's operator set
     mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet) internal _operatorSetMembers;
 ```
+
 
 ### Operator Set Registration
 
@@ -183,8 +186,11 @@ Operator registration is one step of preparing to participate in an AVS. Typical
 
 ```solidity
 /**
- * @notice Modifies the propotions of slashable stake allocated to a list of operatorSets for a set of strategies
- * @param allocations array of magnitude adjustments for multiple strategies and corresponding operator sets
+ * @notice Modifies the proportions of slashable stake allocated to an operator set from a list of strategies
+ * Note that deallocations remain slashable for DEALLOCATION_DELAY blocks therefore when they are cleared they may
+ * free up less allocatable magnitude than initially deallocated.
+ * @param operator the operator to modify allocations for
+ * @param params array of magnitude adjustments for one or more operator sets
  * @dev Updates encumberedMagnitude for the updated strategies
  * @dev msg.sender is used as operator
  */
@@ -193,13 +199,7 @@ function modifyAllocations(AllocateParams[] calldata allocations) external onlyW
 
 This function is called by operators to adjust the proportions of their slashable stake allocated to different operator sets for different strategies.
 
-Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input.
-
-The contract keeps track of the total magnitude in pending allocations, active allocations, and pending deallocations. This is called the **_encumbered magnitude_** for a strategy. The contract verifies that the allocations made in this call do not make the encumbered magnitude exceed the operator's max magnitude for the strategy. If the encumbered magnitude exceeds the max magnitude, the function reverts.
-
-Any _allocations_ (i.e. increases in the proportion of slashable stake allocated to an AVS) take effect after the operator's allocation delay. The allocation delay must be set for the operator before they can call this function.
-
-Any _deallocations_ (i.e. decreases in the proportion of slashable stake allocated to an AVS) take effect after `DEALLOCATION_DELAY` seconds. This enables AVSs enough time to update their view of stakes to the new proportions and have any tasks created against previous stakes to expire.
+Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input, where the input is provided within the following struct:
 
 ```solidity
 /**
@@ -215,11 +215,29 @@ struct AllocateParams {
 }
 ```
 
+The total magnitude assigned in pending allocations, active allocations, and pending deallocations for a strategy is known as the **_encumbered magnitude_**. The contract verifies that the encumbered magnitude never exceeds the operator's max magnitude for the strategy. If any allocations cause the encumbered magnitude to exceed the max magnitude, this function reverts.
+
+The function handles two scenarios: _allocations_, and _deallocations_.
+
+_Allocations_ are increases in the proportion of slashable stake allocated to an operator set, and take effect after the operator's `ALLOCATION_DELAY`. The allocation delay must be set for the operator (in `setAllocationDelay()`) before they can call this function.
+
+_Deallocations_ are decreases in the proportion of slashable stake allocated to an operator set, and take effect after the `DEALLOCATION_DELAY`. This enables AVSs enough time to update their view of stakes to the new proportions, expire any tasks created against previous stakes, and conclude any remaining slashes.
+
 *Effects*:
 * Pending eligible deallocations are cleared for each strategy
-* Events emitted:
-  * `EncumberedMagnitudeUpdated`
-  * `AllocationUpdated`
+* If the operation is a deallocation:
+  * Determine if the operator is considered "slashable", i.e. `true` if: `isRegistered()` is true; the strategy is in the operatorSet; and the allocated magnitude is not 0
+    * If slashable:
+      * Push the `operatorSet` to the back of the `deallocationQueue` for a given `operator` and `strategy`
+      * Add the `DEALLOCATION_DELAY` to the current block number to calculate the block at which the magnitude is no longer slashable (saved in `info.effectBlock`)
+    * If not slashable:
+      * Remove the magnitude from `info.encumberedMagnitude`
+      * Update `allocation.currentMagnitude` to the new magnitude
+      * Set `allocation.pendingDiff` to 0
+* If the operation is an allocation:
+  * Add the magnitude to `info.encumberedMagnitude`
+  * Add the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
+* Update storage to save any changes made above
 
 *Requirements*:
 * Allocation modifications MUST NOT be paused
@@ -229,18 +247,21 @@ struct AllocateParams {
   * This is to ensure that every strategy has a specified magnitude to allocate
 * Operator set MUST exist for each specified AVS
 * Operator MUST NOT have pending modifications for any given strategy
+  * This is enforced after any pending eligible deallocations are cleared
 * New magnitudes MUST NOT match existing ones
+* New encumbered magnitudes MUST NOT exceed max magnitudes for a given `operator`, `operatorSet`, and `strategy`
 
 #### `clearDeallocationQueue`
 
 ```solidity
 /**
- * @notice This function takes a list of strategies and adds all completable deallocations for each strategy,
- * updating the encumberedMagnitude of the operator as needed.
+ * @notice This function takes a list of strategies and for each strategy, removes from the deallocationQueue
+ * all clearable deallocations up to max `numToClear` number of deallocations, updating the encumberedMagnitude
+ * of the operator as needed.
  *
- * @param operator address to complete deallocations for
- * @param strategies a list of strategies to complete deallocations for
- * @param numToComplete a list of number of pending deallocations to complete for each strategy
+ * @param operator address to clear deallocations for
+ * @param strategies a list of strategies to clear deallocations for
+ * @param numToClear a list of number of pending deallocations to clear for each strategy
  *
  * @dev can be called permissionlessly by anyone
  */
@@ -253,9 +274,15 @@ function clearDeallocationQueue(
 
 This function is used to complete pending deallocations for a list of strategies for an operator. The function takes a list of strategies and the number of pending deallocations to complete for each strategy. For each strategy, the function completes pending deallocations if their effect timestamps have passed.
 
-Completing a deallocation decreases the encumbered magnitude for the strategy, allowing them to make allocations with that magnitude. Encumbered magnitude must be decreased only upon completion because pending deallocations can be slashed before they are completable.
+Completing a deallocation decreases the encumbered magnitude for the strategy, allowing them to make allocations with that magnitude. Encumbered magnitude must be decreased only upon completion as pending deallocations can be slashed before they are completed.
 
-### Allocation Delays Changes
+*Effects*:
+* If the deallocation delay has passed for an allocation, update the allocation information to reflect the successful deallocation, and remove the deallocation from `deallocationQueue`
+
+*Requirements*:
+* Strategy list MUST be equal length to `numToClear` list
+
+### Allocation Delay Changes
 
 #### `setAllocationDelay`
 
@@ -272,11 +299,13 @@ This function sets an operator's allocation delay.
 
 The DelegationManager calls this upon operator registration for all new operators created after the slashing release. Operators can also update their allocation delay, or set it for the first time if they joined before the slashing release.
 
-The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` seconds.
+The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` blocks.
 
 The allocation delay can be any `uint32`, including 0.
 
 The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with.
+
+This function must be called before allocating stake via `modifyAllocations()`.
 
 *Effects*:
 * Set the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
@@ -294,6 +323,16 @@ The allocation delay's primary purpose is to give stakers delegated to an operat
 ### Administrating Operator Sets
 
 #### `createOperatorSets`
+
+```solidity
+/**
+ * @notice Allows an AVS to create new operator sets, defining strategies that the operator set uses
+ */
+function createOperatorSets(address avs, CreateSetParams[] calldata params) external;
+```
+
+AVSs can make as many operator sets as they desire for their particular purposes.
+
 #### `addStrategiesToOperatorSet`
 #### `removeStrategiesFromOperatorSet`
 #### `setAVSRegistrar`
