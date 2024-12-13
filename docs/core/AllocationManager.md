@@ -51,11 +51,18 @@ struct OperatorSet {
 
 Every `OperatorSet` corresponds to a single AVS, as indicated by the `avs` parameter. Each `OperatorSet` is then given a specific `id` upon creation, which must be unique per `avs`. Together, the `avs` and `id` form the `key` that uniquely identifies a given `OperatorSet`.
 
+All operator sets for a given AVS are tracked in the following mapping, where the `UintSet` contains each aforementioned operator set `key`:
+
+```solidity
+/// @dev Lists the operator sets an AVS has created
+mapping(address avs => EnumerableSet.UintSet) internal _operatorSets;
+```
+
 All members of an operator set are stored in the below mapping:
 
 ```solidity
 /// @dev Lists the members of an AVS's operator set
-    mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet) internal _operatorSetMembers;
+mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet) internal _operatorSetMembers;
 ```
 
 ### Operator Set Registration
@@ -354,11 +361,108 @@ This function must be called before allocating stake via `modifyAllocations()`.
 function createOperatorSets(address avs, CreateSetParams[] calldata params) external;
 ```
 
-AVSs can make as many operator sets as they desire for their particular purposes.
+AVSs can make as many operator sets as they desire for their particular purposes, provided in the format below:
+
+```solidity
+/**
+ * @notice Parameters used by an AVS to create new operator sets
+ * @param operatorSetId the id of the operator set to create
+ * @param strategies the strategies to add as slashable to the operator set
+ */
+struct CreateSetParams {
+    uint32 operatorSetId;
+    IStrategy[] strategies;
+}
+```
+
+The `operatorSetId` is used to generate the `key` mentioned in [Operator Sets](#operator-sets). The `strategies` specify which strategies the AVS will value for that given operator set. AVSs may create different operator sets with various strategies based on the AVS's needs.
+
+Note that if any `operatorSetId` has already been registered, the entire call will fail.
+
+*Effects*:
+* For each `CreateSetParams` element:
+  * For each `params.strategies` elemnt:
+    * Assigns `strategy` to `_operatorSetStrategies[operatorSetKey]`
+    * Emits `StrategyAddedToOperatorSet` event
+
+*Requirements*:
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
+* For each `CreateSetParams` element:
+  * Each `params.strategies` array MUST be less than `MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
+  * Each `params.operatorSetId` MUST NOT already be registered in `_operatorSets[avs]`
 
 #### `addStrategiesToOperatorSet`
+
+```solidity
+function addStrategiesToOperatorSet(
+    address avs,
+    uint32 operatorSetId,
+    IStrategy[] calldata strategies
+) external checkCanCall(avs)
+```
+
+This function allows an AVS (or authorized user) to add strategies to a given operator set. Note that if any strategy is already registered for the given operator set, the entire call will fail.
+
+*Effects*:
+* For each `strategies` element:
+  * Adds the strategy to `_operatorSetStrategies[operatorSetKey]`
+  * Emits a `StrategyAddedToOperatorSet` event
+
+*Requirements*:
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
+* `operatorSetStrategies[operatorSetKey].length() + strategies.length <= MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
+* The operator set MUST be registered for the AVS
+* Each proposed strategy MUST NOT be registered for the operator set
+
 #### `removeStrategiesFromOperatorSet`
+
+```solidity
+function removeStrategiesFromOperatorSet(
+    address avs,
+    uint32 operatorSetId,
+    IStrategy[] calldata strategies
+) external checkCanCall(avs)
+```
+
+This function allows an AVS (or authorized user) to remove strategies from a given operator set. Note that if any strategy is not registered for the given operator set, the entire call will fail.
+
+*Effects*:
+* For each `strategies` element:
+  * Removes the strategy from `_operatorSetStrategies[operatorSetKey]`
+  * Emits a `StrategyRemovedFromOperatorSet` event
+
+*Requirements*:
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
+* The operator set MUST be registered for the AVS
+* Each proposed strategy MUST be registered for the operator set
+
 #### `setAVSRegistrar`
+
+```solidity
+function setAVSRegistrar(
+  address avs,
+  IAVSRegistrar registrar
+)
+  external
+  checkCanCall(avs)
+```
+
+Sets the `registrar` for a given `avs`. Note that if the registrar is set to 0, `getAVSRegistrar` will return the AVS's address.
+
+The `avs => registrar` mapping is saved in the mapping below:
+
+```solidity
+/// @dev Contains the AVS's configured registrar contract that handles registration/deregistration
+/// Note: if set to 0, defaults to the AVS's address
+mapping(address avs => IAVSRegistrar) internal _avsRegistrar;
+```
+
+*Effects*:
+* Sets `_avsRegistrar[avs]` to `registrar`
+* Emits an `AVSRegistrarSet` event
+
+*Requirements*:
+* None
 
 ### Slashing Operators
 
