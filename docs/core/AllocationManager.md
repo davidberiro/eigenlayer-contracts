@@ -58,7 +58,6 @@ All members of an operator set are stored in the below mapping:
     mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet) internal _operatorSetMembers;
 ```
 
-
 ### Operator Set Registration
 
 The following mapping tracks operator registrations for operator sets:
@@ -133,13 +132,14 @@ struct RegisterParams {
 The `data` is arbitrary information passed onto the AVS's specific `AVSRegistrar` for the AVS's particular considerations for acceptance. If the AVS reverts, registration will fail.
 
 *Effects*:
-* The proposed operator sets are added to the operator's list of registered sets (`registeredSets`)
-* The operator is added to `_operatorSetMembers` for each operator set
-* The operator is marked as registered for the given operator sets (in `registrationStatus`)
-* The `params` for registration are passed to the AVS's `AVSRegistrar`, which can arbitrarily handle the registration request
+* Adds the proposed operator sets to the operator's list of registered sets (`registeredSets`)
+* Adds the operator to `_operatorSetMembers` for each operator set
+* Marks the operator as registered for the given operator sets (in `registrationStatus`)
+* Passes the `params` for registration to the AVS's `AVSRegistrar`, which can arbitrarily handle the registration request
+* Emits an `OperatorAddedToOperatorSet` event for each operator
 
 *Requirements*:
-* Operator registration/deregistration MUST NOT be paused
+* Pause status MUST NOT be set: `PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION`
 * Address MUST be registered as an operator
 * Caller MUST be the operator
   * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
@@ -162,16 +162,17 @@ onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
 Operators may desire to deregister from operator sets; this function generally inverts the effects of `registerForOperatorSets` with some specific exceptions.
 
 *Effects*:
-* The proposed operator sets are removed from the operator's list of registered sets (`registeredSets`)
-* The operator is removed from `_operatorSetMembers` for each operator set
-* The operator is marked as deregistered for the given operator sets (in `registrationStatus`)
-* The operator's `registeredUntil` value is set to `uint32(block.number) + DEALLOCATION_DELAY`
+* Removes the proposed operator sets from the operator's list of registered sets (`registeredSets`)
+* Removes the operator from `_operatorSetMembers` for each operator set
+* Marks the operator as deregistered for the given operator sets (in `registrationStatus`)
+* Sets the operator's `registeredUntil` value to `uint32(block.number) + DEALLOCATION_DELAY`
   * As mentioned above, this allows for AVSs to slash deregistered operators that performed slashable behavior, until the delay expires
-* The `params` for registration are passed to the AVS's `AVSRegistrar`, which can arbitrarily handle the registration request
+* Emits an `OperatorRemovedFromOperatorSet` event for each operator
+* Passes the `params` for registration to the AVS's `AVSRegistrar`, which can arbitrarily handle the deregistration request
 
 *Requirements*:
 <!-- * Address MUST be registered as an operator -->
-* Operator registration/deregistration MUST NOT be paused
+* Pause status MUST NOT be set: `PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION`
 * Caller MUST be the operator OR the AVS
   * An admin and/or appointee for either can also call this function (see the [PermissionController](../permissions/PermissionController.md))
 * Each operator set ID MUST exist for the given AVS
@@ -221,35 +222,49 @@ The function handles two scenarios: _allocations_, and _deallocations_.
 
 _Allocations_ are increases in the proportion of slashable stake allocated to an operator set, and take effect after the operator's `ALLOCATION_DELAY`. The allocation delay must be set for the operator (in `setAllocationDelay()`) before they can call this function.
 
-_Deallocations_ are decreases in the proportion of slashable stake allocated to an operator set, and take effect after the `DEALLOCATION_DELAY`. This enables AVSs enough time to update their view of stakes to the new proportions, expire any tasks created against previous stakes, and conclude any remaining slashes.
+_Deallocations_ are decreases in the proportion of slashable stake allocated to an operator set, and take effect after the `DEALLOCATION_DELAY`. This enables AVSs enough time to update their view of stakes to the new proportions, expire any tasks created against previous stakes, and conclude any remaining slashes. All deallocations are saved in the following mapping:
+
+```solidity
+/// @dev For a strategy, keeps an ordered queue of operator sets that have pending deallocations
+/// These must be completed in order to free up magnitude for future allocation
+mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes32Deque)) internal deallocationQueue;
+```
 
 *Effects*:
-* Pending eligible deallocations are cleared for each strategy
-* If the operation is a deallocation:
-  * Determine if the operator is considered "slashable", i.e. `true` if: `isRegistered()` is true; the strategy is in the operatorSet; and the allocated magnitude is not 0
-    * If slashable:
-      * Push the `operatorSet` to the back of the `deallocationQueue` for a given `operator` and `strategy`
-      * Add the `DEALLOCATION_DELAY` to the current block number to calculate the block at which the magnitude is no longer slashable (saved in `info.effectBlock`)
-    * If not slashable:
-      * Remove the magnitude from `info.encumberedMagnitude`
-      * Update `allocation.currentMagnitude` to the new magnitude
-      * Set `allocation.pendingDiff` to 0
-* If the operation is an allocation:
-  * Add the magnitude to `info.encumberedMagnitude`
-  * Add the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
-* Update storage to save any changes made above
+* For each `AllocationParam` element:
+  * For each `operatorSet` in `deallocationQueue[operator][strategy]`:
+    * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
+    * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
+    * Emits an `EncumberedMagnitudeUpdated` event
+    * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
+  * If the operation is a deallocation:
+    * Determines if the operator is considered "slashable", i.e. `true` if: `isRegistered()` is true; the strategy is in the operatorSet; and the allocated magnitude is not 0
+      * If slashable:
+        * Pushes the `operatorSet` to the back of the `deallocationQueue` for a given `operator` and `strategy`
+        * Adds the `DEALLOCATION_DELAY` to the current block number to calculate the block at which the magnitude is no longer slashable (saved in `info.effectBlock`)
+      * If not slashable:
+        * Removes the magnitude from `info.encumberedMagnitude`
+        * Updates `allocation.currentMagnitude` to the new magnitude
+        * Sets `allocation.pendingDiff` to 0
+  * Else if the operation is an allocation:
+    * Adds the magnitude to `info.encumberedMagnitude`
+    * Adds the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
+  * Updates storage to save any changes stored above in `info` and `allocation`
+  * Emits an `EncumberedMagnitudeUpdated` event
+  * Emits an `AllocationUpdated` event
 
 *Requirements*:
-* Allocation modifications MUST NOT be paused
+* Pause status MUST NOT be set: `PAUSED_MODIFY_ALLOCATIONS`
 * Caller MUST be authorized, either as the operator or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
 * Operator MUST have already set an allocation delay
-* Provided strategies MUST be of equal length to provided magnitudes for a given `AllocateParams` object
-  * This is to ensure that every strategy has a specified magnitude to allocate
-* Operator set MUST exist for each specified AVS
-* Operator MUST NOT have pending modifications for any given strategy
-  * This is enforced after any pending eligible deallocations are cleared
-* New magnitudes MUST NOT match existing ones
-* New encumbered magnitudes MUST NOT exceed max magnitudes for a given `operator`, `operatorSet`, and `strategy`
+* For each `AllocationParams` element:
+  * Provided strategies MUST be of equal length to provided magnitudes for a given `AllocateParams` object
+    * This is to ensure that every strategy has a specified magnitude to allocate
+  * Operator set MUST exist for each specified AVS
+  * Operator MUST NOT have pending modifications for any given strategy
+    * This is enforced after any pending eligible deallocations are cleared
+  * New magnitudes MUST NOT match existing ones
+  * New encumbered magnitudes MUST NOT exceed max magnitudes for a given `operator`, `operatorSet`, and `strategy`
 
 #### `clearDeallocationQueue`
 
@@ -277,9 +292,17 @@ This function is used to complete pending deallocations for a list of strategies
 Completing a deallocation decreases the encumbered magnitude for the strategy, allowing them to make allocations with that magnitude. Encumbered magnitude must be decreased only upon completion as pending deallocations can be slashed before they are completed.
 
 *Effects*:
+* For each `strategies` element, and for each `numToClear` element:
+  * Halts if the `numToClear` has been reached (i.e. `numCleared >= numToClear`) or if all deallocations have been cleared
+  * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
+  * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
+  * Emits an `EncumberedMagnitudeUpdated` event
+  * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
+  * Increments `numCleared`
 * If the deallocation delay has passed for an allocation, update the allocation information to reflect the successful deallocation, and remove the deallocation from `deallocationQueue`
 
 *Requirements*:
+* Pause status MUST NOT be on: `PAUSED_MODIFY_ALLOCATIONS`
 * Strategy list MUST be equal length to `numToClear` list
 
 ### Allocation Delay Changes
@@ -308,15 +331,15 @@ The allocation delay's primary purpose is to give stakers delegated to an operat
 This function must be called before allocating stake via `modifyAllocations()`.
 
 *Effects*:
-* Set the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
+* Sets the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
   * `effectBlock = uint32(block.number) + ALLOCATION_CONFIGURATION_DELAY`
-* If the operator has a `pendingDelay`, and if the `effectBlock` has passed, set the operator's `delay` to the `pendingDelay` value
+* If the operator has a `pendingDelay`, and if the `effectBlock` has passed, sets the operator's `delay` to the `pendingDelay` value
   * This also sets the `isSet` boolean to `true` to indicate that the operator's `delay`, even if 0, was set intentionally
-* Emit an `AllocationDelaySet` event with the `operator`, new pending `delay`, and `effectBlock` at which the `pendingDelay` can be activated
+* Emits an `AllocationDelaySet` event
 
 *Requirements*:
-* Caller MUST BE either the DelegationManager, or an existing operator
-  * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+* Caller MUST BE either the DelegationManager, or a registered operator
+  * An admin and/or appointee for the operator can also call this function (see the [PermissionController](../permissions/PermissionController.md))
 
 ## AVSs
 
