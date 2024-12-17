@@ -256,7 +256,15 @@ mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes
     * Else if the operation is an allocation:
         * Adds the magnitude to `info.encumberedMagnitude`
         * Adds the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
-    * Updates storage to save any changes stored above in `info` and `allocation`
+    * Calls internal function `_updateAllocationInfo()` to do the following:
+        * Updates `encumberedMagnitude` with `info.encumberedMagnitude` given a change, and emits an `EncumberedMagnitudeUpdated` if so
+        * If a pending modification remains:
+            * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
+            * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
+        * Else if the allocated magnitude is now 0:
+            * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
+            * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
+                * Removes the `operatorSetKey` from `allocatedSets` for a given operator
     * Emits an `EncumberedMagnitudeUpdated` event
     * Emits an `AllocationUpdated` event
 
@@ -303,8 +311,15 @@ Completing a deallocation decreases the encumbered magnitude for the strategy, a
 * For each `strategies` element, and for each `numToClear` element:
     * Halts if the `numToClear` has been reached (i.e. `numCleared >= numToClear`) or if all deallocations have been cleared
     * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
-    * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
-    * Emits an `EncumberedMagnitudeUpdated` event
+    * Calls internal function `_updateAllocationInfo()` to do the following:
+        * Updates `encumberedMagnitude` with `info.encumberedMagnitude` given a change, and emits an `EncumberedMagnitudeUpdated` if so
+        * If a pending modification remains:
+            * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
+            * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
+        * Else if the allocated magnitude is now 0:
+            * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
+            * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
+                * Removes the `operatorSetKey` from `allocatedSets` for a given operator
     * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
     * Increments `numCleared`
 * If the deallocation delay has passed for an allocation, update the allocation information to reflect the successful deallocation, and remove the deallocation from `deallocationQueue`
@@ -564,15 +579,15 @@ Note that a slash is performed on a single operator and operator set at a time, 
         * Reduces `allocation.pendingDiff` proportional to `wadsToSlash` for the given strategy
         * Emits an `AllocationUpdated` event
     * Calls internal function `_updateAllocationInfo()` to do the following:
-        * Updates `encumberedMagnitude` with `info.encumberedMagnitude`
-        * If a pendimg modification remains:
+        * Updates `encumberedMagnitude` with `info.encumberedMagnitude` given a change, and emits an `EncumberedMagnitudeUpdated` if so
+        * If a pending modification remains:
             * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
             * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
         * Else if the allocated magnitude is now 0:
             * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
             * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
                 * Removes the `operatorSetKey` from `allocatedSets` for a given operator
-    * Emits an `EncumberedMagnitudeUpdated` event and an `AllocationUpdated` event
+    * Emits an `AllocationUpdated` event
     * Pushes a new entry to `_maxMagnitudeHistory` for a given `operator` and `strategy` with the current block number and new max magnitude
     * Emits a `MaxMagnitudeUpdated` event
     * Calls [`DelegationManager`](./DelegationManager.md) function `burnOperatorShares()`
