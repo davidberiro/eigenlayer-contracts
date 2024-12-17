@@ -95,11 +95,11 @@ struct RegistrationStatus {
 
 Note that the `RegistrationStatus` for an operator of an operator set is expected to be in one of three states:
 * `registered: false` and `registeredUntil: 0`
-  * Before any registrations or deregistrations.
+    * Before any registrations or deregistrations.
 * `registered: true` and `registeredUntil: 0`
-  * After an operator has successfully registered for an operator set.
+    * After an operator has successfully registered for an operator set.
 * `registered: false` and `registeredUntil: block.number + DEALLOCATION_DELAY`
-  * A deregistered operator. Operators may be slashed for any slashable behavior until the delay has passed.
+    * A deregistered operator. Operators may be slashed for any slashable behavior until the delay has passed.
 
 The below mapping stores that data, where the `operatorSetKey` refers to the `key` described above for a given operator set:
 
@@ -115,9 +115,9 @@ function registerForOperatorSets(
     address operator,
     RegisterParams calldata params
 )
-external
-onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
-checkCanCall(operator);
+    external
+    onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
+    checkCanCall(operator);
 ```
 
 An operator may call this function to register for any number of operator sets of a given AVS at once. Operator registrations are provided in the form of the struct defined below:
@@ -149,7 +149,7 @@ The `data` is arbitrary information passed onto the AVS's specific `AVSRegistrar
 * Pause status MUST NOT be set: `PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION`
 * Address MUST be registered as an operator
 * Caller MUST be the operator
-  * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+    * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
 * Each operator set ID MUST exist for the given AVS
 * Operator MUST NOT already be registered for any proposed operator sets
 * If operator has deregistered, operator MUST NOT be slashable anymore (i.e. the `DEALLOCATION_DELAY` must have passed)
@@ -162,8 +162,8 @@ The `data` is arbitrary information passed onto the AVS's specific `AVSRegistrar
 function deregisterFromOperatorSets(
     DeregisterParams calldata params
 )
-external
-onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
+    external
+    onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
 ```
 
 Operators may desire to deregister from operator sets; this function generally inverts the effects of `registerForOperatorSets` with some specific exceptions.
@@ -173,7 +173,7 @@ Operators may desire to deregister from operator sets; this function generally i
 * Removes the operator from `_operatorSetMembers` for each operator set
 * Marks the operator as deregistered for the given operator sets (in `registrationStatus`)
 * Sets the operator's `registeredUntil` value to `uint32(block.number) + DEALLOCATION_DELAY`
-  * As mentioned above, this allows for AVSs to slash deregistered operators that performed slashable behavior, until the delay expires
+    * As mentioned above, this allows for AVSs to slash deregistered operators that performed slashable behavior, until the delay expires
 * Emits an `OperatorRemovedFromOperatorSet` event for each operator
 * Passes the `params` for registration to the AVS's `AVSRegistrar`, which can arbitrarily handle the deregistration request
 
@@ -181,7 +181,7 @@ Operators may desire to deregister from operator sets; this function generally i
 <!-- * Address MUST be registered as an operator -->
 * Pause status MUST NOT be set: `PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION`
 * Caller MUST be the operator OR the AVS
-  * An admin and/or appointee for either can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+    * An admin and/or appointee for either can also call this function (see the [PermissionController](../permissions/PermissionController.md))
 * Each operator set ID MUST exist for the given AVS
 * Operator MUST be registered for the given operator sets
 * Note that, unlike `registerForOperatorSets`, the AVS's `AVSRegistrar` MAY revert and the deregistration will still succeed
@@ -239,39 +239,39 @@ mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes
 
 *Effects*:
 * For each `AllocationParam` element:
-  * For each `operatorSet` in `deallocationQueue[operator][strategy]`:
-    * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
-    * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
+    * For each `operatorSet` in `deallocationQueue[operator][strategy]`:
+        * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
+        * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
+        * Emits an `EncumberedMagnitudeUpdated` event
+        * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
+    * If the operation is a deallocation:
+        * Determines if the operator is considered "slashable", i.e. `true` if: `isRegistered()` is true; the strategy is in the operatorSet; and the allocated magnitude is not 0
+            * If slashable:
+                * Pushes the `operatorSet` to the back of the `deallocationQueue` for a given `operator` and `strategy`
+                * Adds the `DEALLOCATION_DELAY` to the current block number to calculate the block at which the magnitude is no longer slashable (saved in `info.effectBlock`)
+            * If not slashable:
+                * Removes the magnitude from `info.encumberedMagnitude`
+                * Updates `allocation.currentMagnitude` to the new magnitude
+                * Sets `allocation.pendingDiff` to 0
+    * Else if the operation is an allocation:
+        * Adds the magnitude to `info.encumberedMagnitude`
+        * Adds the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
+    * Updates storage to save any changes stored above in `info` and `allocation`
     * Emits an `EncumberedMagnitudeUpdated` event
-    * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
-  * If the operation is a deallocation:
-    * Determines if the operator is considered "slashable", i.e. `true` if: `isRegistered()` is true; the strategy is in the operatorSet; and the allocated magnitude is not 0
-      * If slashable:
-        * Pushes the `operatorSet` to the back of the `deallocationQueue` for a given `operator` and `strategy`
-        * Adds the `DEALLOCATION_DELAY` to the current block number to calculate the block at which the magnitude is no longer slashable (saved in `info.effectBlock`)
-      * If not slashable:
-        * Removes the magnitude from `info.encumberedMagnitude`
-        * Updates `allocation.currentMagnitude` to the new magnitude
-        * Sets `allocation.pendingDiff` to 0
-  * Else if the operation is an allocation:
-    * Adds the magnitude to `info.encumberedMagnitude`
-    * Adds the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
-  * Updates storage to save any changes stored above in `info` and `allocation`
-  * Emits an `EncumberedMagnitudeUpdated` event
-  * Emits an `AllocationUpdated` event
+    * Emits an `AllocationUpdated` event
 
 *Requirements*:
 * Pause status MUST NOT be set: `PAUSED_MODIFY_ALLOCATIONS`
 * Caller MUST be authorized, either as the operator or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
 * Operator MUST have already set an allocation delay
 * For each `AllocationParams` element:
-  * Provided strategies MUST be of equal length to provided magnitudes for a given `AllocateParams` object
-    * This is to ensure that every strategy has a specified magnitude to allocate
-  * Operator set MUST exist for each specified AVS
-  * Operator MUST NOT have pending modifications for any given strategy
-    * This is enforced after any pending eligible deallocations are cleared
-  * New magnitudes MUST NOT match existing ones
-  * New encumbered magnitudes MUST NOT exceed max magnitudes for a given `operator`, `operatorSet`, and `strategy`
+    * Provided strategies MUST be of equal length to provided magnitudes for a given `AllocateParams` object
+        * This is to ensure that every strategy has a specified magnitude to allocate
+    * Operator set MUST exist for each specified AVS
+    * Operator MUST NOT have pending modifications for any given strategy
+        * This is enforced after any pending eligible deallocations are cleared
+    * New magnitudes MUST NOT match existing ones
+    * New encumbered magnitudes MUST NOT exceed max magnitudes for a given `operator`, `operatorSet`, and `strategy`
 
 #### `clearDeallocationQueue`
 
@@ -291,7 +291,8 @@ function clearDeallocationQueue(
     address operator,
     IStrategy[] calldata strategies,
     uint16[] calldata numToComplete
-) external;
+)
+    external
 ```
 
 This function is used to complete pending deallocations for a list of strategies for an operator. The function takes a list of strategies and the number of pending deallocations to complete for each strategy. For each strategy, the function completes pending deallocations if their effect timestamps have passed.
@@ -300,12 +301,12 @@ Completing a deallocation decreases the encumbered magnitude for the strategy, a
 
 *Effects*:
 * For each `strategies` element, and for each `numToClear` element:
-  * Halts if the `numToClear` has been reached (i.e. `numCleared >= numToClear`) or if all deallocations have been cleared
-  * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
-  * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
-  * Emits an `EncumberedMagnitudeUpdated` event
-  * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
-  * Increments `numCleared`
+    * Halts if the `numToClear` has been reached (i.e. `numCleared >= numToClear`) or if all deallocations have been cleared
+    * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
+    * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
+    * Emits an `EncumberedMagnitudeUpdated` event
+    * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
+    * Increments `numCleared`
 * If the deallocation delay has passed for an allocation, update the allocation information to reflect the successful deallocation, and remove the deallocation from `deallocationQueue`
 
 *Requirements*:
@@ -322,7 +323,11 @@ Completing a deallocation decreases the encumbered magnitude for the strategy, a
  * @param operator The operator to set the delay on behalf of.
  * @param delay The allocation delay in seconds.
  */
-function setAllocationDelay(address operator, uint32 delay) external;
+function setAllocationDelay(
+    address operator,
+    uint32 delay
+)
+    external
 ```
 
 This function sets an operator's allocation delay.
@@ -339,14 +344,14 @@ This function must be called before allocating stake via `modifyAllocations()`.
 
 *Effects*:
 * Sets the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
-  * `effectBlock = uint32(block.number) + ALLOCATION_CONFIGURATION_DELAY`
+    * `effectBlock = uint32(block.number) + ALLOCATION_CONFIGURATION_DELAY`
 * If the operator has a `pendingDelay`, and if the `effectBlock` has passed, sets the operator's `delay` to the `pendingDelay` value
-  * This also sets the `isSet` boolean to `true` to indicate that the operator's `delay`, even if 0, was set intentionally
+    * This also sets the `isSet` boolean to `true` to indicate that the operator's `delay`, even if 0, was set intentionally
 * Emits an `AllocationDelaySet` event
 
 *Requirements*:
 * Caller MUST BE either the DelegationManager, or a registered operator
-  * An admin and/or appointee for the operator can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+    * An admin and/or appointee for the operator can also call this function (see the [PermissionController](../permissions/PermissionController.md))
 
 ## AVSs
 
@@ -358,7 +363,11 @@ This function must be called before allocating stake via `modifyAllocations()`.
 /**
  * @notice Allows an AVS to create new operator sets, defining strategies that the operator set uses
  */
-function createOperatorSets(address avs, CreateSetParams[] calldata params) external;
+function createOperatorSets(
+    address avs,
+    CreateSetParams[] calldata params
+)
+    external
 ```
 
 AVSs can make as many operator sets as they desire for their particular purposes, provided in the format below:
@@ -381,15 +390,15 @@ Note that if any `operatorSetId` has already been registered, the entire call wi
 
 *Effects*:
 * For each `CreateSetParams` element:
-  * For each `params.strategies` elemnt:
-    * Assigns `strategy` to `_operatorSetStrategies[operatorSetKey]`
-    * Emits `StrategyAddedToOperatorSet` event
+    * For each `params.strategies` elemnt:
+        * Assigns `strategy` to `_operatorSetStrategies[operatorSetKey]`
+        * Emits `StrategyAddedToOperatorSet` event
 
 *Requirements*:
 * Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
 * For each `CreateSetParams` element:
-  * Each `params.strategies` array MUST be less than `MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
-  * Each `params.operatorSetId` MUST NOT already be registered in `_operatorSets[avs]`
+    * Each `params.strategies` array MUST be less than `MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
+    * Each `params.operatorSetId` MUST NOT already be registered in `_operatorSets[avs]`
 
 #### `addStrategiesToOperatorSet`
 
@@ -398,15 +407,17 @@ function addStrategiesToOperatorSet(
     address avs,
     uint32 operatorSetId,
     IStrategy[] calldata strategies
-) external checkCanCall(avs)
+)
+    external
+    checkCanCall(avs)
 ```
 
 This function allows an AVS (or authorized user) to add strategies to a given operator set. Note that if any strategy is already registered for the given operator set, the entire call will fail.
 
 *Effects*:
 * For each `strategies` element:
-  * Adds the strategy to `_operatorSetStrategies[operatorSetKey]`
-  * Emits a `StrategyAddedToOperatorSet` event
+    * Adds the strategy to `_operatorSetStrategies[operatorSetKey]`
+    * Emits a `StrategyAddedToOperatorSet` event
 
 *Requirements*:
 * Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
@@ -421,15 +432,17 @@ function removeStrategiesFromOperatorSet(
     address avs,
     uint32 operatorSetId,
     IStrategy[] calldata strategies
-) external checkCanCall(avs)
+)
+    external
+    checkCanCall(avs)
 ```
 
 This function allows an AVS (or authorized user) to remove strategies from a given operator set. Note that if any strategy is not registered for the given operator set, the entire call will fail.
 
 *Effects*:
 * For each `strategies` element:
-  * Removes the strategy from `_operatorSetStrategies[operatorSetKey]`
-  * Emits a `StrategyRemovedFromOperatorSet` event
+    * Removes the strategy from `_operatorSetStrategies[operatorSetKey]`
+    * Emits a `StrategyRemovedFromOperatorSet` event
 
 *Requirements*:
 * Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
@@ -440,11 +453,11 @@ This function allows an AVS (or authorized user) to remove strategies from a giv
 
 ```solidity
 function setAVSRegistrar(
-  address avs,
-  IAVSRegistrar registrar
+    address avs,
+    IAVSRegistrar registrar
 )
-  external
-  checkCanCall(avs)
+    external
+    checkCanCall(avs)
 ```
 
 Sets the `registrar` for a given `avs`. Note that if the registrar is set to 0, `getAVSRegistrar` will return the AVS's address.
@@ -466,7 +479,9 @@ mapping(address avs => IAVSRegistrar) internal _avsRegistrar;
 
 ### Slashing Operators
 
-#### `slashOperator`
+*See [this blog post](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/) for more on the EigenLayer security model.*
+
+AVSs that detect misbehaving operators can slash operators as a punitive action. Slashing operations are proposed in the following format:
 
 ```solidity
 /**
@@ -485,7 +500,13 @@ struct SlashingParams {
     uint256[] wadsToSlash;
     string description;
 }
+```
 
+An AVS specifies the `operator` to slash, the `operatorSet` against which the operator misbehaved, the `strategies` to slash, and proportion of each (represented by `wadsToSlash`). A `description` string allows the AVS to add context to the slash.
+
+#### `slashOperator`
+
+```solidity
 /**
  * @notice Called by an AVS to slash an operator for given operatorSetId, list of strategies, and wadToSlash.
  * For each given (operator, operatorSetId, strategy) tuple, bipsToSlash
@@ -499,41 +520,79 @@ struct SlashingParams {
  * @param description the description of the slashing provided by the AVS for legibility
  */
 function slashOperator(
+    address avs,
     SlashingParams calldata params
-) external
+)
+    external
+    onlyWhenNotPaused(PAUSED_OPERATOR_SLASHING)
+    checkCanCall(avs)
 ```
 
-This function is called by AVSs to slash an operator for a given operator set and list of strategies. The AVS provides the proportion of the operator's slashable stake allocation to slash for each strategy. The proportion is given in parts in 1e18 and is with respect to the operator's _current_ slashable stake allocation for the operator set (i.e. `wadsToSlash=5e17` means 50% of the operator's slashable stake allocation for the operator set will be slashed). The AVS also provides a description of the slashing for legibility by outside integrations.
+This function is called by AVSs to slash an operator for a given operator set and list of strategies. The AVS provides the proportion of the operator's slashable stake allocation to slash for each strategy. The proportion is given in parts in `1e18` and is with respect to the operator's _current_ slashable stake allocation for the operator set (i.e. `wadsToSlash=5e17` means 50% of the operator's slashable stake allocation for the operator set will be slashed). The AVS also provides a description of the slashing for legibility by outside integrations.
 
 Slashing is instant and irreversable. Slashed funds remain unrecoverable in the protocol but will be burned/redistributed in a future release. Slashing by one operatorSet does not effect the slashable stake allocation of other operatorSets for the same operator and strategy.
 
 Slashing updates storage in a way that instantly updates all view functions to reflect the correct values.
 
+Function arguments are provided as follows:
+
+```solidity
+/**
+ * @notice Struct containing parameters to slashing
+ * @param operator the address to slash
+ * @param operatorSetId the ID of the operatorSet the operator is being slashed on behalf of
+ * @param strategies the set of strategies to slash
+ * @param wadsToSlash the parts in 1e18 to slash, this will be proportional to the operator's
+ * slashable stake allocation for the operatorSet
+ * @param description the description of the slashing provided by the AVS for legibility
+ */
+struct SlashingParams {
+    address operator;
+    uint32 operatorSetId;
+    IStrategy[] strategies;
+    uint256[] wadsToSlash;
+    string description;
+}
+```
+
+Note that a slash is performed on a single operator and operator set at a time, but can take in any number of `strategies`. All of these strategies must be registered to the operator set.
+
+*Effects*:
+* For each `params.strategies` element:
+    * Calculates magnitude to slash by multiplying current magnitude by the provided `wadsToSlash` for the given strategy, and subtracts this value from `allocation.currentMagnitude`, `info.maxMagnitude`, and `info.encumberedMagnitude`
+    * If there is a pending deallocation:
+        * Reduces `allocation.pendingDiff` proportional to `wadsToSlash` for the given strategy
+        * Emits an `AllocationUpdated` event
+    * Calls internal function `_updateAllocationInfo()` to do the following:
+        * Updates `encumberedMagnitude` with `info.encumberedMagnitude`
+        * If a pendimg modification remains:
+            * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
+            * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
+        * Else if the allocated magnitude is now 0:
+            * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
+            * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
+                * Removes the `operatorSetKey` from `allocatedSets` for a given operator
+    * Emits an `EncumberedMagnitudeUpdated` event and an `AllocationUpdated` event
+    * Pushes a new entry to `_maxMagnitudeHistory` for a given `operator` and `strategy` with the current block number and new max magnitude
+    * Emits a `MaxMagnitudeUpdated` event
+    * Calls [`DelegationManager`](./DelegationManager.md) function `burnOperatorShares()`
+* Emits an `OperatorSlashed` event
+
+*Requirements*:
+* Pause status MUST NOT be set: `PAUSED_OPERATOR_SLASHING`
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
+* Operator set MUST be registered for the AVS
+* Operator MUST BE slashable, i.e.:
+    * Operator is registreed for the operator set, *OR*
+    * The operator's `DEALLOCATION_DELAY` has not yet completed
+* `params.strategies` MUST be in ascending order (to ensure no duplicates)
+* For each `params.strategies` element:
+    * `0` MUST BE less than `wadsToSlash` which MUST BE less than `1e18`
+    * Operator set MUST contain the strategy
+    * Operator SHOULD have allocated magnitude > 0 to the operator set for this strategy, else `continue`
+
 ------
 
 ## View Functions
 
-### `getMinDelegatedAndSlashableOperatorSharesBefore`
-
-```solidity
-/**
- * @notice returns the minimum operatorShares and the slashableOperatorShares for an operator, list of strategies,
- * and an operatorSet before a given timestamp. This is used to get the shares to weight operators by given ones slashing window.
- * @param operatorSet the operatorSet to get the shares for
- * @param operators the operators to get the shares for
- * @param strategies the strategies to get the shares for
- * @param beforeTimestamp the timestamp to get the shares at
- */
-function getMinDelegatedAndSlashableOperatorSharesBefore(
-    OperatorSet calldata operatorSet,
-    address[] calldata operators,
-    IStrategy[] calldata strategies,
-    uint32 beforeTimestamp
-) external view returns (uint256[][] memory, uint256[][] memory)
-```
-
-This function returns the minimum operator shares and the slashable operator shares for an operator, list of strategies, and an operator set before a given timestamp. This is used by AVSs to pessimistically estimate the operator's slashable stake allocation for a given strategy and operator set within their slashability windows. If an AVS calls this function every week and creates tasks that are slashable for a week after they're created, then `beforeTimestamp` should be 2 weeks in the future to account for the latest task that may be created against stale stakes. More on this in new docs soon.
-
-### Additional View Functions
-
-See the [AllocationManager Interface](../../../src/contracts/interfaces/IAllocationManager.sol) for additional view functions.
+See the [AllocationManager Interface](../../../src/contracts/interfaces/IAllocationManager.sol) for view functions.
