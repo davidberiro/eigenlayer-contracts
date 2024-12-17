@@ -1,8 +1,19 @@
 # AllocationManager
 
-| File | Type | Proxy |
-| -------- | -------- | -------- |
-| [`AllocationManager.sol`](../../src/contracts/core/AllocationManager.sol) | Singleton | Transparent proxy |
+| File | Notes |
+| -------- | -------- |
+| [`AllocationManager.sol`](../../src/contracts/core/AllocationManager.sol) |  |
+| [`AllocationManagerStorage.sol`](../../src/contracts/core/AllocationManagerStorage.sol) | state variables |
+| [`IAllocationManager.sol`](../../src/contracts/interfaces/IAllocationManager.sol) | interface |
+
+Libraries and Mixins:
+
+| File | Notes |
+| -------- | -------- |
+| [`PermissionControllerMixin.sol`](../../src/contracts/mixins/PermissionControllerMixin.sol) | account delegation |
+| [`Pausable.sol`](../../src/contracts/permissions/Pausable.sol) | |
+| [`SlashingLib.sol`](../../src/contracts/libraries/SlashingLib.sol) | slashing math |
+| [`OperatorSetLib.sol`](../../src/contracts/libraries/OperatorSetLib.sol) | encode/decode operator sets |
 
 ## Prerequisites
 
@@ -10,32 +21,25 @@
 
 ## Overview
 
-The AllocationManager contract manages the allocation and slashing of operators' slashable stake across various strategies and operator sets. It also enforces allocation and deallocation delays and handles the slashing process initiated by AVSs.
-
-Two types of users interact directly with the AllocationManager:
-* [Operators](#operators)
-* [AVSs](#avss)
+The `AllocationManager` manages registration and deregistration of operators to operator sets, handles allocation and slashing of operators' slashable stake, and is the entry point an AVS uses to slash an operator. The `AllocationManager's` responsibilities are broken down into the following concepts:
+* [Operator Sets](#operator-sets)
+* [Allocations and Slashing](#allocations-and-slashing)
+* [Config](#config)
 
 ## Parameterization
 
 * `ALLOCATION_CONFIGURATION_DELAY`: The delay in blocks (estimated) before allocations take effect.
     * Mainnet: `126000 blocks` (17.5 days).
-    * Testnet: `90 blocks` (15 minutes).
-    * Public Devnet: `90 blocks` (15 minutes).
+    * Testnet: `75 blocks` (15 minutes).
 * `DEALLOCATION_DELAY`: The delay in blocks (estimated) before deallocations take effect.
     * Mainnet: `100800 blocks` (14 days).
-    * Testnet: `60 blocks` (10 minutes).
-    * Public Devnet: `60 blocks` (10 minutes).
+    * Testnet: `50 blocks` (10 minutes).
 
-## Operators
+---
 
-Operators interact with the AllocationManager to join operator sets, modify their allocations of slashable stake, and change their allocation delay.
+## Operator Sets
 
-### Operator Sets
-
-Operator sets, as described in [Introducing the EigenLayer Security Model](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/), are useful for AVSs to configure operator groupings which can be assigned different tasks, rewarded based on their strategy allocations, and slashed according to different rules.
-
-An operator set is defined as below:
+Operator sets, as described in [Introducing the EigenLayer Security Model](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/), are useful for AVSs to configure operator groupings which can be assigned different tasks, rewarded based on their strategy allocations, and slashed according to different rules. Operator sets are defined in [`libraries/OperatorSetLib.sol`](../../src/contracts/libraries/OperatorSetLib.sol):
 
 ```solidity
 /**
@@ -49,78 +53,168 @@ struct OperatorSet {
 }
 ```
 
-Every `OperatorSet` corresponds to a single AVS, as indicated by the `avs` parameter. Each `OperatorSet` is then given a specific `id` upon creation, which must be unique per `avs`. Together, the `avs` and `id` form the `key` that uniquely identifies a given `OperatorSet`.
-
-All operator sets for a given AVS are tracked in the following mapping, where the `UintSet` contains each aforementioned operator set `key`:
+The `AllocationManager` tracks operator sets and members of operator sets in the following mappings:
 
 ```solidity
-/// @dev Lists the operator sets an AVS has created
+/// @dev Lists the operator set ids an AVS has created
 mapping(address avs => EnumerableSet.UintSet) internal _operatorSets;
-```
 
-All members of an operator set are stored in the below mapping:
-
-```solidity
 /// @dev Lists the members of an AVS's operator set
 mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet) internal _operatorSetMembers;
 ```
 
-### Operator Set Registration
+Every `OperatorSet` corresponds to a single AVS, as indicated by the `avs` parameter. On creation, the AVS provides an `id` (unique to that AVS), as well as a list of `strategies` the `OperatorSet` includes. Together, the `avs` and `id` form the `key` that uniquely identifies a given `OperatorSet`. Operators can register to and deregister from operator sets. In combination with allocating slashable magnitude, operator set registration forms the basis of operator slashability (discussed further in [Allocations and Slashing](#allocations-and-slashing)).
 
-The following mapping tracks operator registrations for operator sets:
+#### Registration Status
+
+Operator registration and deregistration is tracked in the following state variables:
 
 ```solidity
 /// @dev Lists the operator sets the operator is registered for. Note that an operator
 /// can be registered without allocated stake. Likewise, an operator can allocate
 /// without being registered.
 mapping(address operator => EnumerableSet.Bytes32Set) internal registeredSets;
-```
 
-The `Bytes32Set` value saves a list of `key` values from `OperatorSet` instances. Each operator [registration](#registerforoperatorsets) and [deregistration](#deregisterfromoperatorsets) respectively adds and removes the relevant `key` for a given operator.
-
-The below struct captures the registration status for an operator regarding a given operator set:
-
-```solidity
 /**
  * @notice Contains registration details for an operator pertaining to an operator set
  * @param registered Whether the operator is currently registered for the operator set
- * @param registeredUntil If the operator is not registered, how long until the operator is no longer
- * slashable by the AVS.
+ * @param slashableUntil If the operator is not registered, they are still slashable until
+ * this block is reached.
  */
 struct RegistrationStatus {
     bool registered;
-    uint32 registeredUntil;
+    uint32 slashableUntil;
 }
-```
 
-Note that the `RegistrationStatus` for an operator of an operator set is expected to be in one of three states:
-* `registered: false` and `registeredUntil: 0`
-    * Before any registrations or deregistrations.
-* `registered: true` and `registeredUntil: 0`
-    * After an operator has successfully registered for an operator set.
-* `registered: false` and `registeredUntil: block.number + DEALLOCATION_DELAY`
-    * A deregistered operator. Operators may be slashed for any slashable behavior until the delay has passed.
-
-The below mapping stores that data, where the `operatorSetKey` refers to the `key` described above for a given operator set:
-
-```solidity
 /// @dev Contains the operator's registration status for an operator set.
 mapping(address operator => mapping(bytes32 operatorSetKey => RegistrationStatus)) internal registrationStatus;
 ```
 
-#### `registerForOperatorSets`
+For each operator, `registeredSets` keeps a list of `OperatorSet` `keys` for which the operator is currently registered. Each operator registration and deregistration respectively adds and removes the relevant `key` for a given operator. An additional factor in registration is the operator's `RegistrationStatus`.
+
+The `RegistrationStatus.slashableUntil` value is used to ensure an operator remains slashable for a period of time after they initiate deregistration. This is to prevent an operator from committing a slashable offence and immediately deregistering to avoid penalty. This means that when an operator deregisters from an operator set, their `RegistrationStatus.slashableUntil` value is set to `block.number + DEALLOCATION_DELAY`.
+
+**Methods:**
+* [`createOperatorSets`](#createoperatorsets)
+* [`addStrategiesToOperatorSet`](#addstrategiestooperatorset)
+* [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset)
+* [`registerForOperatorSets`](#registerforoperatorsets)
+* [`deregisterFromOperatorSets`](#deregisterfromoperatorsets)
+
+#### `createOperatorSets`
 
 ```solidity
-function registerForOperatorSets(
-    address operator,
-    RegisterParams calldata params
+/**
+ * @notice Parameters used by an AVS to create new operator sets
+ * @param operatorSetId the id of the operator set to create
+ * @param strategies the strategies to add as slashable to the operator set
+ */
+struct CreateSetParams {
+    uint32 operatorSetId;
+    IStrategy[] strategies;
+}
+
+/**
+ * @notice Allows an AVS to create new operator sets, defining strategies that the operator set uses
+ */
+function createOperatorSets(
+    address avs,
+    CreateSetParams[] calldata params
 )
     external
-    onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
-    checkCanCall(operator);
+    checkCanCall(avs)
 ```
 
-An operator may call this function to register for any number of operator sets of a given AVS at once. Operator registrations are provided in the form of the struct defined below:
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
+AVSs use this method to create new operator sets. An AVS can create as many operator sets as they desire, depending on their needs. Once created, operators can [allocate slashable stake to](#modifyallocations) and [register for](#registerforoperatorsets) these operator sets.
+
+On creation, the `avs` specifies an `operatorSetId` unique to the AVS. Together, the `avs` address and `operatorSetId` create a `key` that uniquely identifies this operator set throughout the `AllocationManager`.
+
+Optionally, the `avs` can provide a list of `strategies`, specifying which strategies will be slashable for the new operator set. AVSs may create operator sets with various strategies based on their needs - and strategies may be added to more than one operator set.
+
+*Effects*:
+* For each `CreateSetParams` element:
+    * For each `params.strategies` element:
+        * Add `strategy` to `_operatorSetStrategies[operatorSetKey]`
+        * Emits `StrategyAddedToOperatorSet` event
+
+*Requirements*:
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* For each `CreateSetParams` element:
+    * Each `params.operatorSetId` MUST NOT already exist in `_operatorSets[avs]`
+    * Each `params.strategies` array MUST be less than or equal to `MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
+    
+#### `addStrategiesToOperatorSet`
+
+```solidity
+/**
+ * @notice Allows an AVS to add strategies to an operator set
+ * @dev Strategies MUST NOT already exist in the operator set
+ * @param avs the avs to set strategies for
+ * @param operatorSetId the operator set to add strategies to
+ * @param strategies the strategies to add
+ */
+function addStrategiesToOperatorSet(
+    address avs,
+    uint32 operatorSetId,
+    IStrategy[] calldata strategies
+)
+    external
+    checkCanCall(avs)
+```
+
+<!-- TODO: document what happens when an operator allocates and a strategy is added/removed _after_ allocation! (this is expected behavior) -->
+
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
+This function allows an AVS to add slashable strategies to a given operator set. If any strategy is already registered for the given operator set, the entire call will fail.
+
+*Effects*:
+* For each `strategies` element:
+    * Adds the strategy to `_operatorSetStrategies[operatorSetKey]`
+    * Emits a `StrategyAddedToOperatorSet` event
+
+*Requirements*:
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* `operatorSetStrategies[operatorSetKey].length() + strategies.length <= MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
+* The operator set MUST be registered for the AVS
+* Each proposed strategy MUST NOT be registered for the operator set
+
+#### `removeStrategiesFromOperatorSet`
+
+```solidity
+/**
+ * @notice Allows an AVS to remove strategies from an operator set
+ * @dev Strategies MUST already exist in the operator set
+ * @param avs the avs to remove strategies for
+ * @param operatorSetId the operator set to remove strategies from
+ * @param strategies the strategies to remove
+ */
+function removeStrategiesFromOperatorSet(
+    address avs,
+    uint32 operatorSetId,
+    IStrategy[] calldata strategies
+)
+    external
+    checkCanCall(avs)
+```
+
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
+This function allows an AVS to remove slashable strategies from a given operator set. If any strategy is not registered for the given operator set, the entire call will fail.
+
+*Effects*:
+* For each `strategies` element:
+    * Removes the strategy from `_operatorSetStrategies[operatorSetKey]`
+    * Emits a `StrategyRemovedFromOperatorSet` event
+
+*Requirements*:
+* Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* The operator set MUST be registered for the AVS
+* Each proposed strategy MUST be registered for the operator set
+
+#### `registerForOperatorSets`
 
 ```solidity
 /**
@@ -134,9 +228,42 @@ struct RegisterParams {
     uint32[] operatorSetIds;
     bytes data;
 }
+
+/**
+ * @notice Allows an operator to register for one or more operator sets for an AVS. If the operator
+ * has any stake allocated to these operator sets, it immediately becomes slashable.
+ * @dev After registering within the ALM, this method calls the AVS Registrar's `IAVSRegistrar.
+ * registerOperator` method to complete registration. This call MUST succeed in order for 
+ * registration to be successful.
+ */
+function registerForOperatorSets(
+    address operator,
+    RegisterParams calldata params
+)
+    external
+    onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
+    checkCanCall(operator)
 ```
 
-The `data` is arbitrary information passed onto the AVS's specific `AVSRegistrar` for the AVS's particular considerations for acceptance. If the AVS reverts, registration will fail.
+_Note: this method can be called directly by an operator, or by a caller authorized by the operator via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
+An operator may call this function to register for any number of operator sets of a given AVS at once. There are two very important details to know about this method:
+1. As part of registration, each operator set is added to the operator's `registeredSets`. Note that for each newly-registered set, **any stake allocations to the operator set become immediately slashable**.
+2. Once all sets have been added, the AVS's configured `IAVSRegistrar` is called to confirm and complete registration. _This call MUST NOT revert,_ as **AVSs are expected to use this call to reject ineligible operators** (according to their own custom logic). Note that if the AVS has not configured a registrar, the `avs` itself is called.
+
+This method makes an external call to the `IAVSRegistrar.registerOperator` method, passing in the registering `operator`, the `operatorSetIds` being registered for, and the input `params.data` provided during registration. From [`IAVSRegistrar.sol`](../../src/contracts/interfaces/IAVSRegistrar.sol):
+
+```solidity
+/**
+ * @notice Called by the AllocationManager when an operator wants to register
+ * for one or more operator sets. This method should revert if registration
+ * is unsuccessful.
+ * @param operator the registering operator
+ * @param operatorSetIds the list of operator set ids being registered for
+ * @param data arbitrary data the operator can provide as part of registration
+ */
+function registerOperator(address operator, uint32[] calldata operatorSetIds, bytes calldata data) external;
+```
 
 *Effects*:
 * Adds the proposed operator sets to the operator's list of registered sets (`registeredSets`)
@@ -147,18 +274,36 @@ The `data` is arbitrary information passed onto the AVS's specific `AVSRegistrar
 
 *Requirements*:
 * Pause status MUST NOT be set: `PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION`
-* Address MUST be registered as an operator
-* Caller MUST be the operator
-    * An admin and/or appointee for the account can also call this function (see the [PermissionController](../permissions/PermissionController.md))
-* Each operator set ID MUST exist for the given AVS
+* `operator` MUST be registered as an operator in the `DelegationManager`
+* Caller MUST be authorized, either the operator themselves, or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* Each `operatorSetId` MUST exist for the given AVS
 * Operator MUST NOT already be registered for any proposed operator sets
 * If operator has deregistered, operator MUST NOT be slashable anymore (i.e. the `DEALLOCATION_DELAY` must have passed)
-* The AVS's `AVSRegistrar` MUST NOT revert
-<!-- There is no explict check that the AVS exists -- presumably captured by checking that the opeartor set ID exists for the AVS? -->
+* The call to the AVS's configured `IAVSRegistrar` MUST NOT revert
 
 #### `deregisterFromOperatorSets`
 
 ```solidity
+/**
+ * @notice Parameters used to deregister from an AVS's operator sets
+ * @param operator the operator being deregistered
+ * @param avs the avs being deregistered from
+ * @param operatorSetIds the operator sets within the AVS being deregistered from
+ */
+struct DeregisterParams {
+    address operator;
+    address avs;
+    uint32[] operatorSetIds;
+}
+
+/**
+ * @notice Allows an operator or AVS to deregister the operator from one or more of the AVS's operator sets.
+ * If the operator has any slashable stake allocated to the AVS, it remains slashable until the
+ * DEALLOCATION_DELAY has passed.
+ * @dev After deregistering within the ALM, this method calls the AVS Registrar's `IAVSRegistrar.
+ * deregisterOperator` method to complete deregistration. Unlike when registering, this call MAY FAIL.
+ * Failure is permitted to prevent AVSs from being able to maliciously prevent operators from deregistering.
+ */
 function deregisterFromOperatorSets(
     DeregisterParams calldata params
 )
@@ -166,27 +311,45 @@ function deregisterFromOperatorSets(
     onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
 ```
 
-Operators may desire to deregister from operator sets; this function generally inverts the effects of `registerForOperatorSets` with some specific exceptions.
+_Note: this method can be called directly by an operator/AVS, or by a caller authorized by the operator/AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
+This method may be called by EITHER an operator OR an AVS to which an operator is registered; it is intended to allow deregistration to be triggered by EITHER party. This method generally inverts the effects of `registerForOperatorSets`, with two specific exceptions:
+1. As part of deregistration, each operator set is removed from the operator's `registeredSets`. HOWEVER, **any stake allocations to that operator set will remain slashable for `DEALLOCATION_DELAY` blocks.**
+2. Once all sets have been removed, the AVS's configured `IAVSRegistrar` is called to complete deregistration on the AVS side. **Unlike registration, if this call reverts it will be ignored.** This is to stop an AVS from maliciously preventing operators from deregistering.
+
+This method makes an external call to the `IAVSRegistrar.deregisterOperator` method, passing in the deregistering `operator` and the `operatorSetIds` being deregistered from. From [`IAVSRegistrar.sol`](../../src/contracts/interfaces/IAVSRegistrar.sol):
+
+```solidity
+/**
+ * @notice Called by the AllocationManager when an operator is deregistered from
+ * one or more operator sets. If this method reverts, it is ignored.
+ * @param operator the deregistering operator
+ * @param operatorSetIds the list of operator set ids being deregistered from
+ */
+function deregisterOperator(address operator, uint32[] calldata operatorSetIds) external;
+```
 
 *Effects*:
 * Removes the proposed operator sets from the operator's list of registered sets (`registeredSets`)
 * Removes the operator from `_operatorSetMembers` for each operator set
-* Marks the operator as deregistered for the given operator sets (in `registrationStatus`)
-* Sets the operator's `registeredUntil` value to `uint32(block.number) + DEALLOCATION_DELAY`
-    * As mentioned above, this allows for AVSs to slash deregistered operators that performed slashable behavior, until the delay expires
+* Updates the operator's `registrationStatus` with:
+    * `registered: false`
+    * `slashableUntil: block.number + DEALLOCATION_DELAY`
+        * As mentioned above, this allows for AVSs to slash deregistered operators until `block.number == slashableUntil`
 * Emits an `OperatorRemovedFromOperatorSet` event for each operator
-* Passes the `params` for registration to the AVS's `AVSRegistrar`, which can arbitrarily handle the deregistration request
+* Passes the `operator` and `operatorSetIds` to the AVS's `AVSRegistrar`, which can arbitrarily handle the deregistration request
 
 *Requirements*:
 <!-- * Address MUST be registered as an operator -->
 * Pause status MUST NOT be set: `PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION`
-* Caller MUST be the operator OR the AVS
-    * An admin and/or appointee for either can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+* Caller MUST be authorized, either the operator/AVS themselves, or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 * Each operator set ID MUST exist for the given AVS
 * Operator MUST be registered for the given operator sets
 * Note that, unlike `registerForOperatorSets`, the AVS's `AVSRegistrar` MAY revert and the deregistration will still succeed
 
-### Allocation Modifications
+---
+
+## Allocations and Slashing
 
 Operator registration is one step of preparing to participate in an AVS. Typically, an AVS will also expect operators to allocate slashable stake, such that the AVS has some economic security.
 
@@ -328,172 +491,6 @@ Completing a deallocation decreases the encumbered magnitude for the strategy, a
 * Pause status MUST NOT be on: `PAUSED_MODIFY_ALLOCATIONS`
 * Strategy list MUST be equal length to `numToClear` list
 
-### Allocation Delay Changes
-
-#### `setAllocationDelay`
-
-```solidity
-/**
- * @notice Called by operators or the delegation manager to set their allocation delay.
- * @param operator The operator to set the delay on behalf of.
- * @param delay The allocation delay in seconds.
- */
-function setAllocationDelay(
-    address operator,
-    uint32 delay
-)
-    external
-```
-
-This function sets an operator's allocation delay.
-
-The DelegationManager calls this upon operator registration for all new operators created after the slashing release. Operators can also update their allocation delay, or set it for the first time if they joined before the slashing release.
-
-The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` blocks.
-
-The allocation delay can be any `uint32`, including 0.
-
-The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with.
-
-This function must be called before allocating stake via `modifyAllocations()`.
-
-*Effects*:
-* Sets the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
-    * `effectBlock = uint32(block.number) + ALLOCATION_CONFIGURATION_DELAY`
-* If the operator has a `pendingDelay`, and if the `effectBlock` has passed, sets the operator's `delay` to the `pendingDelay` value
-    * This also sets the `isSet` boolean to `true` to indicate that the operator's `delay`, even if 0, was set intentionally
-* Emits an `AllocationDelaySet` event
-
-*Requirements*:
-* Caller MUST BE either the DelegationManager, or a registered operator
-    * An admin and/or appointee for the operator can also call this function (see the [PermissionController](../permissions/PermissionController.md))
-
-## AVSs
-
-### Administrating Operator Sets
-
-#### `createOperatorSets`
-
-```solidity
-/**
- * @notice Allows an AVS to create new operator sets, defining strategies that the operator set uses
- */
-function createOperatorSets(
-    address avs,
-    CreateSetParams[] calldata params
-)
-    external
-```
-
-AVSs can make as many operator sets as they desire for their particular purposes, provided in the format below:
-
-```solidity
-/**
- * @notice Parameters used by an AVS to create new operator sets
- * @param operatorSetId the id of the operator set to create
- * @param strategies the strategies to add as slashable to the operator set
- */
-struct CreateSetParams {
-    uint32 operatorSetId;
-    IStrategy[] strategies;
-}
-```
-
-The `operatorSetId` is used to generate the `key` mentioned in [Operator Sets](#operator-sets). The `strategies` specify which strategies the AVS will value for that given operator set. AVSs may create different operator sets with various strategies based on the AVS's needs.
-
-Note that if any `operatorSetId` has already been registered, the entire call will fail.
-
-*Effects*:
-* For each `CreateSetParams` element:
-    * For each `params.strategies` elemnt:
-        * Assigns `strategy` to `_operatorSetStrategies[operatorSetKey]`
-        * Emits `StrategyAddedToOperatorSet` event
-
-*Requirements*:
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
-* For each `CreateSetParams` element:
-    * Each `params.strategies` array MUST be less than `MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
-    * Each `params.operatorSetId` MUST NOT already be registered in `_operatorSets[avs]`
-
-#### `addStrategiesToOperatorSet`
-
-```solidity
-function addStrategiesToOperatorSet(
-    address avs,
-    uint32 operatorSetId,
-    IStrategy[] calldata strategies
-)
-    external
-    checkCanCall(avs)
-```
-
-This function allows an AVS (or authorized user) to add strategies to a given operator set. Note that if any strategy is already registered for the given operator set, the entire call will fail.
-
-*Effects*:
-* For each `strategies` element:
-    * Adds the strategy to `_operatorSetStrategies[operatorSetKey]`
-    * Emits a `StrategyAddedToOperatorSet` event
-
-*Requirements*:
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
-* `operatorSetStrategies[operatorSetKey].length() + strategies.length <= MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
-* The operator set MUST be registered for the AVS
-* Each proposed strategy MUST NOT be registered for the operator set
-
-#### `removeStrategiesFromOperatorSet`
-
-```solidity
-function removeStrategiesFromOperatorSet(
-    address avs,
-    uint32 operatorSetId,
-    IStrategy[] calldata strategies
-)
-    external
-    checkCanCall(avs)
-```
-
-This function allows an AVS (or authorized user) to remove strategies from a given operator set. Note that if any strategy is not registered for the given operator set, the entire call will fail.
-
-*Effects*:
-* For each `strategies` element:
-    * Removes the strategy from `_operatorSetStrategies[operatorSetKey]`
-    * Emits a `StrategyRemovedFromOperatorSet` event
-
-*Requirements*:
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
-* The operator set MUST be registered for the AVS
-* Each proposed strategy MUST be registered for the operator set
-
-#### `setAVSRegistrar`
-
-```solidity
-function setAVSRegistrar(
-    address avs,
-    IAVSRegistrar registrar
-)
-    external
-    checkCanCall(avs)
-```
-
-Sets the `registrar` for a given `avs`. Note that if the registrar is set to 0, `getAVSRegistrar` will return the AVS's address.
-
-The `avs => registrar` mapping is saved in the mapping below:
-
-```solidity
-/// @dev Contains the AVS's configured registrar contract that handles registration/deregistration
-/// Note: if set to 0, defaults to the AVS's address
-mapping(address avs => IAVSRegistrar) internal _avsRegistrar;
-```
-
-*Effects*:
-* Sets `_avsRegistrar[avs]` to `registrar`
-* Emits an `AVSRegistrarSet` event
-
-*Requirements*:
-* None
-
-### Slashing Operators
-
 *See [this blog post](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/) for more on the EigenLayer security model.*
 
 AVSs that detect misbehaving operators can slash operators as a punitive action. Slashing operations are proposed in the following format:
@@ -606,8 +603,72 @@ Note that a slash is performed on a single operator and operator set at a time, 
     * Operator set MUST contain the strategy
     * Operator SHOULD have allocated magnitude > 0 to the operator set for this strategy, else `continue`
 
-------
+---
 
-## View Functions
+## Config
 
-See the [AllocationManager Interface](../../../src/contracts/interfaces/IAllocationManager.sol) for view functions.
+#### `setAllocationDelay`
+
+```solidity
+/**
+ * @notice Called by operators or the delegation manager to set their allocation delay.
+ * @param operator The operator to set the delay on behalf of.
+ * @param delay The allocation delay in seconds.
+ */
+function setAllocationDelay(
+    address operator,
+    uint32 delay
+)
+    external
+```
+
+This function sets an operator's allocation delay.
+
+The DelegationManager calls this upon operator registration for all new operators created after the slashing release. Operators can also update their allocation delay, or set it for the first time if they joined before the slashing release.
+
+The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` blocks.
+
+The allocation delay can be any `uint32`, including 0.
+
+The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with.
+
+This function must be called before allocating stake via `modifyAllocations()`.
+
+*Effects*:
+* Sets the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
+    * `effectBlock = uint32(block.number) + ALLOCATION_CONFIGURATION_DELAY`
+* If the operator has a `pendingDelay`, and if the `effectBlock` has passed, sets the operator's `delay` to the `pendingDelay` value
+    * This also sets the `isSet` boolean to `true` to indicate that the operator's `delay`, even if 0, was set intentionally
+* Emits an `AllocationDelaySet` event
+
+*Requirements*:
+* Caller MUST BE either the DelegationManager, or a registered operator
+    * An admin and/or appointee for the operator can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+
+#### `setAVSRegistrar`
+
+```solidity
+function setAVSRegistrar(
+    address avs,
+    IAVSRegistrar registrar
+)
+    external
+    checkCanCall(avs)
+```
+
+Sets the `registrar` for a given `avs`. Note that if the registrar is set to 0, `getAVSRegistrar` will return the AVS's address.
+
+The `avs => registrar` mapping is saved in the mapping below:
+
+```solidity
+/// @dev Contains the AVS's configured registrar contract that handles registration/deregistration
+/// Note: if set to 0, defaults to the AVS's address
+mapping(address avs => IAVSRegistrar) internal _avsRegistrar;
+```
+
+*Effects*:
+* Sets `_avsRegistrar[avs]` to `registrar`
+* Emits an `AVSRegistrarSet` event
+
+*Requirements*:
+* None
