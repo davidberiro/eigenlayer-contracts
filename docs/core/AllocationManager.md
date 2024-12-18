@@ -143,7 +143,6 @@ Optionally, the `avs` can provide a list of `strategies`, specifying which strat
 * Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 * For each `CreateSetParams` element:
     * Each `params.operatorSetId` MUST NOT already exist in `_operatorSets[avs]`
-    * Each `params.strategies` array MUST be less than or equal to `MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
     
 #### `addStrategiesToOperatorSet`
 
@@ -177,7 +176,6 @@ This function allows an AVS to add slashable strategies to a given operator set.
 
 *Requirements*:
 * Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
-* `operatorSetStrategies[operatorSetKey].length() + strategies.length <= MAX_OPERATOR_SET_STRATEGY_LIST_LENGTH`
 * The operator set MUST be registered for the AVS
 * Each proposed strategy MUST NOT be registered for the operator set
 
@@ -351,26 +349,69 @@ function deregisterOperator(address operator, uint32[] calldata operatorSetIds) 
 
 ## Allocations and Slashing
 
-Operator registration is one step of preparing to participate in an AVS. Typically, an AVS will also expect operators to allocate slashable stake, such that the AVS has some economic security.
+[Operator set registration](#operator-sets) is one step of preparing to participate in an AVS. When an operator successfully registers for an operator set, it is because the AVS in question is ready to assign them tasks. However, it follows that _before assigning tasks_ to an operator, an AVS will expect operators to allocate slashable stake to the operator set such that the AVS has some economic security.
 
-#### `modifyAllocations`
+In fact, it is expected that many AVSs will require operators to **allocate slashable stake BEFORE registering for an operator set**. This is due to [`registerForOperatorSets`](#registerforoperatorsets) serving in part as an AVS's "consent mechanism," as calling `IAVSRegsitrar.registerOperator` allows the AVS to query the amount of slashable stake the operator can provide when assigned tasks.
+
+It is only once an operator is both _registered for an operator set_ and _has an active allocation to that operator set_ that the associated AVS can slash actual stake from an operator.
+
+#### Max Magnitude
+
+Operators allocate _magnitude_, which represents a proportion of their total stake. For a given strategy, an operator's max magnitude starts at `1 WAD` (`1e18`), and is decreased when they are slashed.
+
+When an operator allocates magnitude from a strategy to an operator set, their `encumberedMagnitude` for that strategy increases. Because the operator's `maxMagnitude` represents "100%", the `encumberedMagnitude` for a strategy may not exceed that strategy's `maxMagnitude`.
+
+The `AllocationManager` tracks an operator's maximum and currently encumbered magnitudes using the following state variables:
 
 ```solidity
 /**
- * @notice Modifies the proportions of slashable stake allocated to an operator set from a list of strategies
- * Note that deallocations remain slashable for DEALLOCATION_DELAY blocks therefore when they are cleared they may
- * free up less allocatable magnitude than initially deallocated.
- * @param operator the operator to modify allocations for
- * @param params array of magnitude adjustments for one or more operator sets
- * @dev Updates encumberedMagnitude for the updated strategies
- * @dev msg.sender is used as operator
+ * @notice Contains allocation info for a specific strategy
+ * @param maxMagnitude the maximum magnitude that can be allocated between all operator sets
+ * @param encumberedMagnitude the currently-allocated magnitude for the strategy
  */
-function modifyAllocations(AllocateParams[] calldata allocations) external onlyWhenNotPaused(PAUSED_MODIFY_ALLOCATIONS)
+struct StrategyInfo {
+    uint64 maxMagnitude;
+    uint64 encumberedMagnitude;
+}
+
+/// @dev Contains a history of the operator's maximum magnitude for a given strategy
+mapping(address operator => mapping(IStrategy strategy => Snapshots.DefaultWadHistory)) internal _maxMagnitudeHistory;
+
+/// @dev For a strategy, contains the amount of magnitude an operator has allocated to operator sets
+/// @dev This value should be read with caution, as deallocations that are completable but not
+///      popped off the queue are still included in the encumbered magnitude
+mapping(address operator => mapping(IStrategy strategy => uint64)) public encumberedMagnitude;
 ```
 
-This function is called by operators to adjust the proportions of their slashable stake allocated to different operator sets for different strategies.
+#### Queueing Allocations and Deallocations
 
-Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input, where the input is provided within the following struct:
+```solidity
+/**
+ * @notice Defines allocation information from a strategy to an operator set, for an operator
+ * @param currentMagnitude the current magnitude allocated from the strategy to the operator set
+ * @param pendingDiff a pending change in magnitude, if it exists (0 otherwise)
+ * @param effectBlock the block at which the pending magnitude diff will take effect
+ */
+struct Allocation {
+    uint64 currentMagnitude;
+    int128 pendingDiff;
+    uint32 effectBlock;
+}
+
+/// @dev For an operator set and strategy, the current allocated magnitude and any pending modification
+mapping(address operator => mapping(bytes32 operatorSetKey => mapping(IStrategy strategy => Allocation))) internal allocations;
+
+/// @dev For a strategy, keeps an ordered queue of operator sets that have pending deallocations
+/// These must be completed in order to free up magnitude for future allocation
+mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes32Deque)) internal deallocationQueue;
+```
+
+**Methods:**
+* [`modifyAllocations`](#modifyallocations)
+* [`clearDeallocationQueue`](#cleardeallocationqueue)
+* [`slashOperator`](#slashoperator)
+
+#### `modifyAllocations`
 
 ```solidity
 /**
@@ -384,7 +425,28 @@ struct AllocateParams {
     IStrategy[] strategies;
     uint64[] newMagnitudes;
 }
+
+/**
+ * @notice Modifies the proportions of slashable stake allocated to an operator set from a list of strategies
+ * Note that deallocations remain slashable for DEALLOCATION_DELAY blocks therefore when they are cleared they may
+ * free up less allocatable magnitude than initially deallocated.
+ * @param operator the operator to modify allocations for
+ * @param params array of magnitude adjustments for one or more operator sets
+ * @dev Updates encumberedMagnitude for the updated strategies
+ */
+function modifyAllocations(
+    address operator, 
+    AllocateParams[] calldata params
+) 
+    external
+    onlyWhenNotPaused(PAUSED_MODIFY_ALLOCATIONS)
 ```
+
+_Note: this method can be called directly by an operator, or by a caller authorized by the operator via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
+This function is called by an operator to EITHER allocate OR deallocate the magnitude allocated from a strategy to an operator set.
+
+Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input.
 
 The total magnitude assigned in pending allocations, active allocations, and pending deallocations for a strategy is known as the **_encumbered magnitude_**. The contract verifies that the encumbered magnitude never exceeds the operator's max magnitude for the strategy. If any allocations cause the encumbered magnitude to exceed the max magnitude, this function reverts.
 

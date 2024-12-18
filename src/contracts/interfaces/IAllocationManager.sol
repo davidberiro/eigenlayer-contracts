@@ -231,7 +231,6 @@ interface IAllocationManager is ISignatureUtils, IAllocationManagerErrors, IAllo
      * @param operator the operator to modify allocations for
      * @param params array of magnitude adjustments for one or more operator sets
      * @dev Updates encumberedMagnitude for the updated strategies
-     * @dev msg.sender is used as operator
      */
     function modifyAllocations(address operator, AllocateParams[] calldata params) external;
 
