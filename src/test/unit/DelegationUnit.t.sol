@@ -399,20 +399,8 @@ contract DelegationManagerUnitTests is EigenLayerUnitTestSetup, IDelegationManag
         IStrategy[] memory strategyArray = new IStrategy[](1);
         strategyArray[0] = strategy;
 
-        // Calculate the amount of slashing to apply
-        uint64 maxMagnitude = allocationManagerMock.getMaxMagnitudes(operator, strategyArray)[0];
-        uint256 slashingFactor = _getSlashingFactor(staker, strategy, maxMagnitude);
-
-        uint256 sharesToWithdraw = _calcWithdrawableShares(
-            depositSharesToWithdraw,
-            delegationManager.depositScalingFactor(staker, strategy),
-            slashingFactor
-        );
-
-        uint256 scaledShares = SlashingLib.scaleForQueueWithdrawal({
-            sharesToWithdraw: sharesToWithdraw,
-            slashingFactor: slashingFactor
-        });
+        DepositScalingFactor memory dsf = DepositScalingFactor(delegationManager.depositScalingFactor(staker, strategy));
+        uint256 scaledShares = dsf.scaleForQueueWithdrawal(depositSharesToWithdraw);
 
         return scaledShares;
     }
@@ -6119,7 +6107,7 @@ contract DelegationManagerUnitTests_completeQueuedWithdrawal is DelegationManage
         }
         _assertWithdrawalRootsComplete(staker, withdrawals);
         assertEq(
-            delegationManager.getDepositScalingFactor(staker, withdrawals[0].strategies[0]),
+            delegationManager.depositScalingFactor(staker, withdrawals[0].strategies[0]),
             uint256(WAD),
             "deposit scaling factor should be WAD"
         );

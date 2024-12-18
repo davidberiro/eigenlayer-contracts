@@ -643,9 +643,11 @@ contract User is Logger, IDelegationManagerTypes, IAllocationManagerTypes {
         uint256 nonce = delegationManager.cumulativeWithdrawalsQueued(staker);
         
         for (uint256 i = 0; i < strategies.length; ++i) {
-            uint256 scaledShares = withdrawableShares[i].scaleForQueueWithdrawal(
-                _getSlashingFactor(staker, strategies[i])
+            DepositScalingFactor memory dsf = DepositScalingFactor(
+                delegationManager.depositScalingFactor(staker, strategies[i])
             );
+
+            uint256 scaledShares = dsf.scaleForQueueWithdrawal(withdrawableShares[i]);
 
             if (strategies[i] == beaconChainETHStrategy) {
                 scaledShares -= scaledShares % 1 gwei;

@@ -10,15 +10,18 @@ import "@openzeppelin-upgrades/contracts/utils/math/SafeCastUpgradeable.sol";
 uint64 constant WAD = 1e18;
 
 /*
- * There are 2 types of shares:
+ * There are 3 types of shares:
  *      1. depositShares
  *          - These can be converted to an amount of tokens given a strategy
  *              - by calling `sharesToUnderlying` on the strategy address (they're already tokens 
  *              in the case of EigenPods)
- *          - These live in the storage of EPM and SM strategies 
- *      2. shares
+ *          - These live in the storage of EigenPodManager and StrategyManager strategies 
+ *      2. withdrawableShares
  *          - For a staker, this is the amount of shares that they can withdraw
- *          - For an operator, this is the sum of its staker's withdrawable shares       
+ *          - This does not live in storage but is read through the view function `DelegationManager.getWithdrawableShares`
+ *      3. operatorShares/delegatedShares
+ *          - This is the sum of withdrawable shares of all stakers that have delegated to an operators
+ *          - This lives in the storage of DelegationManager.operatorShares()
  * 
  * Note that `withdrawal.scaledShares` is scaled for the beaconChainETHStrategy to divide by the beaconChainScalingFactor upon queueing
  * and multiply by the beaconChainScalingFactor upon withdrawal
@@ -29,7 +32,6 @@ struct DepositScalingFactor {
 
 using SlashingLib for DepositScalingFactor global;
 
-// TODO: validate order of operations everywhere
 library SlashingLib {
     using Math for uint256;
     using SlashingLib for uint256;
@@ -70,14 +72,10 @@ library SlashingLib {
     }
 
     function scaleForQueueWithdrawal(
-        uint256 sharesToWithdraw,
-        uint256 slashingFactor
+        DepositScalingFactor memory dsf,
+        uint256 depositSharesToWithdraw
     ) internal pure returns (uint256) {
-        if (slashingFactor == 0) {
-            return 0;
-        }
-
-        return sharesToWithdraw.divWad(slashingFactor);
+        return depositSharesToWithdraw.mulWad(dsf.scalingFactor());
     }
 
     function scaleForCompleteWithdrawal(uint256 scaledShares, uint256 slashingFactor) internal pure returns (uint256) {
