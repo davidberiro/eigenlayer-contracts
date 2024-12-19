@@ -65,6 +65,16 @@ mapping(bytes32 operatorSetKey => EnumerableSet.AddressSet) internal _operatorSe
 
 Every `OperatorSet` corresponds to a single AVS, as indicated by the `avs` parameter. On creation, the AVS provides an `id` (unique to that AVS), as well as a list of `strategies` the `OperatorSet` includes. Together, the `avs` and `id` form the `key` that uniquely identifies a given `OperatorSet`. Operators can register to and deregister from operator sets. In combination with allocating slashable magnitude, operator set registration forms the basis of operator slashability (discussed further in [Allocations and Slashing](#allocations-and-slashing)).
 
+**Concepts:**
+* [Registration Status](#registration-status)
+
+**Methods:**
+* [`createOperatorSets`](#createoperatorsets)
+* [`addStrategiesToOperatorSet`](#addstrategiestooperatorset)
+* [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset)
+* [`registerForOperatorSets`](#registerforoperatorsets)
+* [`deregisterFromOperatorSets`](#deregisterfromoperatorsets)
+
 #### Registration Status
 
 Operator registration and deregistration is tracked in the following state variables:
@@ -93,13 +103,6 @@ mapping(address operator => mapping(bytes32 operatorSetKey => RegistrationStatus
 For each operator, `registeredSets` keeps a list of `OperatorSet` `keys` for which the operator is currently registered. Each operator registration and deregistration respectively adds and removes the relevant `key` for a given operator. An additional factor in registration is the operator's `RegistrationStatus`.
 
 The `RegistrationStatus.slashableUntil` value is used to ensure an operator remains slashable for a period of time after they initiate deregistration. This is to prevent an operator from committing a slashable offence and immediately deregistering to avoid penalty. This means that when an operator deregisters from an operator set, their `RegistrationStatus.slashableUntil` value is set to `block.number + DEALLOCATION_DELAY`.
-
-**Methods:**
-* [`createOperatorSets`](#createoperatorsets)
-* [`addStrategiesToOperatorSet`](#addstrategiestooperatorset)
-* [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset)
-* [`registerForOperatorSets`](#registerforoperatorsets)
-* [`deregisterFromOperatorSets`](#deregisterfromoperatorsets)
 
 #### `createOperatorSets`
 
@@ -140,7 +143,7 @@ Optionally, the `avs` can provide a list of `strategies`, specifying which strat
         * Emits `StrategyAddedToOperatorSet` event
 
 *Requirements*:
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* Caller MUST be authorized, either as the AVS itself or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 * For each `CreateSetParams` element:
     * Each `params.operatorSetId` MUST NOT already exist in `_operatorSets[avs]`
     
@@ -175,7 +178,7 @@ This function allows an AVS to add slashable strategies to a given operator set.
     * Emits a `StrategyAddedToOperatorSet` event
 
 *Requirements*:
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* Caller MUST be authorized, either as the AVS itself or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 * The operator set MUST be registered for the AVS
 * Each proposed strategy MUST NOT be registered for the operator set
 
@@ -208,7 +211,7 @@ This function allows an AVS to remove slashable strategies from a given operator
     * Emits a `StrategyRemovedFromOperatorSet` event
 
 *Requirements*:
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* Caller MUST be authorized, either as the AVS itself or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 * The operator set MUST be registered for the AVS
 * Each proposed strategy MUST be registered for the operator set
 
@@ -351,17 +354,23 @@ function deregisterOperator(address operator, uint32[] calldata operatorSetIds) 
 
 [Operator set registration](#operator-sets) is one step of preparing to participate in an AVS. When an operator successfully registers for an operator set, it is because the AVS in question is ready to assign them tasks. However, it follows that _before assigning tasks_ to an operator, an AVS will expect operators to allocate slashable stake to the operator set such that the AVS has some economic security.
 
-In fact, it is expected that many AVSs will require operators to **allocate slashable stake BEFORE registering for an operator set**. This is due to [`registerForOperatorSets`](#registerforoperatorsets) serving in part as an AVS's "consent mechanism," as calling `IAVSRegsitrar.registerOperator` allows the AVS to query the amount of slashable stake the operator can provide when assigned tasks.
+For this reason, it is expected that many AVSs will require operators to **allocate slashable stake BEFORE registering for an operator set**. This is due to [`registerForOperatorSets`](#registerforoperatorsets) serving in part as an AVS's "consent mechanism," as calling `IAVSRegsitrar.registerOperator` allows the AVS to query the amount of slashable stake the operator can provide when assigned tasks.
 
 It is only once an operator is both _registered for an operator set_ and _has an active allocation to that operator set_ that the associated AVS can slash actual stake from an operator.
 
+**Concepts:**
+* [Max Magnitude](#max-magnitude)
+* [Allocations and Deallocations](#allocations-and-deallocations)
+* [Evaluating the "Current" Allocation](#evaluating-the-current-allocation)
+
+**Methods:**
+* [`modifyAllocations`](#modifyallocations)
+* [`clearDeallocationQueue`](#cleardeallocationqueue)
+* [`slashOperator`](#slashoperator)
+
 #### Max Magnitude
 
-Operators allocate _magnitude_, which represents a proportion of their total stake. For a given strategy, an operator's max magnitude starts at `1 WAD` (`1e18`), and is decreased when they are slashed.
-
-When an operator allocates magnitude from a strategy to an operator set, their `encumberedMagnitude` for that strategy increases. Because the operator's `maxMagnitude` represents "100%", the `encumberedMagnitude` for a strategy may not exceed that strategy's `maxMagnitude`.
-
-The `AllocationManager` tracks an operator's maximum and currently encumbered magnitudes using the following state variables:
+Operators allocate _magnitude_, which represents a proportion of their total stake. For a given strategy, the `AllocationManager` tracks two quantities, _max magnitude_ and _encumbered magnitude_:
 
 ```solidity
 /**
@@ -383,7 +392,11 @@ mapping(address operator => mapping(IStrategy strategy => Snapshots.DefaultWadHi
 mapping(address operator => mapping(IStrategy strategy => uint64)) public encumberedMagnitude;
 ```
 
-#### Queueing Allocations and Deallocations
+An operator's max magnitude starts at `1 WAD` (`1e18`), and is decreased when they are slashed. Max magnitude represents "100%" of allocatable magnitude. When an operator allocates magnitude from a strategy to an operator set, their encumbered magnitude for that strategy increases. An operator cannot allocate > 100%; therefore, a strategy's encumbered magnitude can never exceed that strategy's max magnitude.
+
+#### Allocations and Deallocations
+
+Magnitude allocations are represented using the following struct:
 
 ```solidity
 /**
@@ -397,7 +410,21 @@ struct Allocation {
     int128 pendingDiff;
     uint32 effectBlock;
 }
+```
 
+When an operator allocates or deallocates magnitude, these modifications become effective at a future block depending on the corresponding delay. Magnitude allocations and deallocations have 2 separate block-based delays:
+* An operator-specific _configurable allocation delay_ (See [`setAllocationDelay`](#setallocationdelay))
+* A _global deallocation delay_ (See [Parameterization](#parameterization))
+
+For UX and complexity reasons, operators can only have _one pending modification_ per `(operatorSet, strategy)`. For example, this means that as an operator, I can simultaneously have:
+* A pending stETH allocation to operator set A
+* A pending stETH allocation to operator set B
+
+However, the `AllocationManager` will NOT allow me to create _another_ pending stETH allocation/deallocation in operator set A. The existing pending allocation to operator set A must first reach its `effectBlock`.
+
+An operator's allocations and deallocations are tracked using the following state variables:
+
+```solidity
 /// @dev For an operator set and strategy, the current allocated magnitude and any pending modification
 mapping(address operator => mapping(bytes32 operatorSetKey => mapping(IStrategy strategy => Allocation))) internal allocations;
 
@@ -406,10 +433,27 @@ mapping(address operator => mapping(bytes32 operatorSetKey => mapping(IStrategy 
 mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes32Deque)) internal deallocationQueue;
 ```
 
-**Methods:**
-* [`modifyAllocations`](#modifyallocations)
-* [`clearDeallocationQueue`](#cleardeallocationqueue)
-* [`slashOperator`](#slashoperator)
+#### Evaluating the "Current" Allocation
+
+As mentioned in the previous section, allocations and deallocations take place on a delay, and as such the `Allocation` struct has both a `currentMagnitude`, and `pendingDiff` / `effectBlock` fields:
+
+```solidity
+/**
+ * @notice Defines allocation information from a strategy to an operator set, for an operator
+ * @param currentMagnitude the current magnitude allocated from the strategy to the operator set
+ * @param pendingDiff a pending change in magnitude, if it exists (0 otherwise)
+ * @param effectBlock the block at which the pending magnitude diff will take effect
+ */
+struct Allocation {
+    uint64 currentMagnitude;
+    int128 pendingDiff;
+    uint32 effectBlock;
+}
+```
+
+Although the `allocations` mapping can be used to fetch an `Allocation` directly, you'll notice a convention in the `AllocationManager` of using the `_getUpdatedAllocation` helper, instead. This helper reads an existing `Allocation`, then evaluates `block.number` against `Allocation.effectBlock` to determine whether or not to apply the `pendingDiff`. If the diff is applied, the helper returns an `Allocation` with an updated `currentMagnitude`.
+
+In cases where an `Allocation` has a completable `pendingDiff` in storage, this convention allows the `AllocationManager` to evaluate the `Allocation` as if the pending modification has already been completed.
 
 #### `modifyAllocations`
 
@@ -444,67 +488,55 @@ function modifyAllocations(
 
 _Note: this method can be called directly by an operator, or by a caller authorized by the operator via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
-This function is called by an operator to EITHER allocate OR deallocate the magnitude allocated from a strategy to an operator set.
+This function is called by an operator to EITHER increase OR decrease the slashable magnitude allocated from a strategy to an operator set. As input, the operator provides an operator set as the target, and a list of strategies and corresponding `newMagnitudes` to allocate. The `newMagnitude` value is compared against the operator's current `Allocation` for that operator set/strategy:
+* If `newMagnitude` is _greater than_ `Allocation.currentMagnitude`, this is an allocation
+* If `newMagnitude` is _less than_ `Allocation.currentMagnitude`, this is a dellocation
+* If `newMagnitude` is _equal to_ `Allocation.currentMagnitude`, this is invalid (revert)
 
-Each `(operator, operatorSet, strategy)` tuple can have at most 1 pending modification at a time. The function will revert is there is a pending modification for any of the tuples in the input.
+Allocation modifications play by different rules depending on a few factors. Recall that at all times, the `encumberedMagnitude` for a strategy may not exceed that strategy's `maxMagnitude`. Additionally, note that _before processing a modification for a strategy,_ the `deallocationQueue` for that strategy is first cleared. This ensures any completable deallocations are processed first, freeing up magnitude for allocation. This process is further explained in [`clearDeallocationQueue`](#cleardeallocationqueue). 
 
-The total magnitude assigned in pending allocations, active allocations, and pending deallocations for a strategy is known as the **_encumbered magnitude_**. The contract verifies that the encumbered magnitude never exceeds the operator's max magnitude for the strategy. If any allocations cause the encumbered magnitude to exceed the max magnitude, this function reverts.
+**If we are handling an _increase in magnitude_ (allocation):**
 
-The function handles two scenarios: _allocations_, and _deallocations_.
+* The increase in magnitude is immediately added to the strategy's `encumberedMagnitude`. This ensures that subsequent _allocations to other operator sets from the same strategy_ will not go above the strategy's `maxMagnitude`.
+* The `allocation.pendingDiff` is set, with an `allocation.effectBlock` equal to the current block plus the operator's configured allocation delay.
 
-_Allocations_ are increases in the proportion of slashable stake allocated to an operator set, and take effect after the operator's `ALLOCATION_DELAY`. The allocation delay must be set for the operator (in `setAllocationDelay()`) before they can call this function.
+**If we are handling a _decrease in magnitude_ (deallocation):**
 
-_Deallocations_ are decreases in the proportion of slashable stake allocated to an operator set, and take effect after the `DEALLOCATION_DELAY`. This enables AVSs enough time to update their view of stakes to the new proportions, expire any tasks created against previous stakes, and conclude any remaining slashes. All deallocations are saved in the following mapping:
+First, evaluate whether the operator's _existing allocation is currently slashable_ by the AVS. This is important because the AVS might be using the existing allocation to secure a task given to this operator. The existing allocation is slashable only if ALL of the following are true:
+1. The operator is registered for the operator set, or if they are deregistered, they are still slashable (See [Registration Status](#registration-status))
+2. The AVS has added the strategy to the operator set. (AVSs can update this - see [`addStrategiesToOperatorSet`](#addstrategiestooperatorset) and [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset))
+3. The existing allocation has a nonzero `currentMagnitude`
 
-```solidity
-/// @dev For a strategy, keeps an ordered queue of operator sets that have pending deallocations
-/// These must be completed in order to free up magnitude for future allocation
-mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes32Deque)) internal deallocationQueue;
-```
+Now, _if the existing allocation is slashable_:
+
+* The `allocation.pendingDiff` is set, with an `allocation.effectBlock` equal to the current block plus the global `DEALLOCATION_DELAY`.
+* The _operator set_ is pushed to the operator's `deallocationQueue` for that strategy, denoting that there is a pending deallocation for this `(operatorSet, strategy)`. This is an ordered queue that enforces deallocations are processed sequentially and is used both in this method and in [`clearDeallocationQueue`](#cleardeallocationqueue).
+
+Finally, _if the existing allocation is NOT slashable_, the deallocated amount is immediately **freed**. It is subtracted from the strategy's encumbered magnitude and can be used for subsequent allocations. This is the only type of update that does not result in a "pending modification." The rationale here is that if the existing allocation is not slashable, the AVS does not need it to secure tasks, and therefore does not need to enforce a deallocation delay.
 
 *Effects*:
-* For each `AllocationParam` element:
-    * For each `operatorSet` in `deallocationQueue[operator][strategy]`:
-        * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
-        * Updates `encumberedMagnitude[operator][strategy]` to the new encumbered magnitude post-deallocation
-        * Emits an `EncumberedMagnitudeUpdated` event
-        * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
-    * If the operation is a deallocation:
-        * Determines if the operator is considered "slashable", i.e. `true` if: `isRegistered()` is true; the strategy is in the operatorSet; and the allocated magnitude is not 0
-            * If slashable:
-                * Pushes the `operatorSet` to the back of the `deallocationQueue` for a given `operator` and `strategy`
-                * Adds the `DEALLOCATION_DELAY` to the current block number to calculate the block at which the magnitude is no longer slashable (saved in `info.effectBlock`)
-            * If not slashable:
-                * Removes the magnitude from `info.encumberedMagnitude`
-                * Updates `allocation.currentMagnitude` to the new magnitude
-                * Sets `allocation.pendingDiff` to 0
-    * Else if the operation is an allocation:
-        * Adds the magnitude to `info.encumberedMagnitude`
-        * Adds the operator's allocation delay to the current block number to calculate the block at which the magnitude is considered slashable (saved in `info.effectBlock`)
-    * Calls internal function `_updateAllocationInfo()` to do the following:
-        * Updates `encumberedMagnitude` with `info.encumberedMagnitude` given a change, and emits an `EncumberedMagnitudeUpdated` if so
-        * If a pending modification remains:
-            * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
-            * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
-        * Else if the allocated magnitude is now 0:
-            * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
-            * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
-                * Removes the `operatorSetKey` from `allocatedSets` for a given operator
-    * Emits an `EncumberedMagnitudeUpdated` event
+* For each `AllocateParams` element:
+    * Complete any existing deallocations (See [`clearDeallocationQueue`](#cleardeallocationqueue))
+    * Update the operator's `encumberedMagnitude`, `allocations`, and `deallocationQueue` according to the rules described above. Additionally:
+        * If `encumberedMagnitude` is updated, emits `EncumberedMagnitudeUpdated`
+        * If a pending modification is created:
+            * Adds the `strategy` to `allocatedStrategies[operator][operatorSetKey]` (if not present)
+            * Adds the `operatorSetKey` to `allocatedSets[operator]` (if not present)
+        * If the allocation now has a `currentMagnitude` of 0:
+            * Removes `strategy` from the `allocatedStrategies[operator][operatorSetKey]` list
+            * If this list now has a lenght of 0, remove `operatorSetKey` from `allocatedSets[operator]`
     * Emits an `AllocationUpdated` event
 
 *Requirements*:
 * Pause status MUST NOT be set: `PAUSED_MODIFY_ALLOCATIONS`
-* Caller MUST be authorized, either as the operator or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
-* Operator MUST have already set an allocation delay
+* Caller MUST be authorized, either as the operator themselves or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
+* Operator MUST have already set an allocation delay (See [`setAllocationDelay`](#setallocationdelay))
 * For each `AllocationParams` element:
     * Provided strategies MUST be of equal length to provided magnitudes for a given `AllocateParams` object
-        * This is to ensure that every strategy has a specified magnitude to allocate
     * Operator set MUST exist for each specified AVS
-    * Operator MUST NOT have pending modifications for any given strategy
-        * This is enforced after any pending eligible deallocations are cleared
+    * Operator MUST NOT have pending, non-completable modifications for any given strategy
     * New magnitudes MUST NOT match existing ones
-    * New encumbered magnitudes MUST NOT exceed max magnitudes for a given `operator`, `operatorSet`, and `strategy`
+    * New encumbered magnitude MUST NOT exceed the operator's max magnitude for the given strategy
 
 #### `clearDeallocationQueue`
 
