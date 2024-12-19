@@ -17,7 +17,8 @@ Libraries and Mixins:
 
 ## Prerequisites
 
-* [The Mechanics of Allocating and Slashing Unique Stake](https://forum.eigenlayer.xyz/t/the-mechanics-of-allocating-and-slashing-unique-stake/13870)
+* [Introducing the EigenLayer Security Model](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/)
+* [ELIP-002: Slashing via Unique Stake and Operator Sets](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md)
 
 ## Overview
 
@@ -128,7 +129,7 @@ function createOperatorSets(
     checkCanCall(avs)
 ```
 
-_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 AVSs use this method to create new operator sets. An AVS can create as many operator sets as they desire, depending on their needs. Once created, operators can [allocate slashable stake to](#modifyallocations) and [register for](#registerforoperatorsets) these operator sets.
 
@@ -168,7 +169,7 @@ function addStrategiesToOperatorSet(
 
 <!-- TODO: document what happens when an operator allocates and a strategy is added/removed _after_ allocation! (this is expected behavior) -->
 
-_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 This function allows an AVS to add slashable strategies to a given operator set. If any strategy is already registered for the given operator set, the entire call will fail.
 
@@ -201,7 +202,7 @@ function removeStrategiesFromOperatorSet(
     checkCanCall(avs)
 ```
 
-_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 This function allows an AVS to remove slashable strategies from a given operator set. If any strategy is not registered for the given operator set, the entire call will fail.
 
@@ -246,7 +247,7 @@ function registerForOperatorSets(
     checkCanCall(operator)
 ```
 
-_Note: this method can be called directly by an operator, or by a caller authorized by the operator via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+_Note: this method can be called directly by an operator, or by a caller authorized by the operator. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 An operator may call this function to register for any number of operator sets of a given AVS at once. There are two very important details to know about this method:
 1. As part of registration, each operator set is added to the operator's `registeredSets`. Note that for each newly-registered set, **any stake allocations to the operator set become immediately slashable**.
@@ -312,7 +313,7 @@ function deregisterFromOperatorSets(
     onlyWhenNotPaused(PAUSED_OPERATOR_SET_REGISTRATION_AND_DEREGISTRATION)
 ```
 
-_Note: this method can be called directly by an operator/AVS, or by a caller authorized by the operator/AVS via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+_Note: this method can be called directly by an operator/AVS, or by a caller authorized by the operator/AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 This method may be called by EITHER an operator OR an AVS to which an operator is registered; it is intended to allow deregistration to be triggered by EITHER party. This method generally inverts the effects of `registerForOperatorSets`, with two specific exceptions:
 1. As part of deregistration, each operator set is removed from the operator's `registeredSets`. HOWEVER, **any stake allocations to that operator set will remain slashable for `DEALLOCATION_DELAY` blocks.**
@@ -362,6 +363,7 @@ It is only once an operator is both _registered for an operator set_ and _has an
 * [Max Magnitude](#max-magnitude)
 * [Allocations and Deallocations](#allocations-and-deallocations)
 * [Evaluating the "Current" Allocation](#evaluating-the-current-allocation)
+* [Evaluating Whether an Allocation is "Slashable"](#evaluating-whether-an-allocation-is-slashable)
 
 **Methods:**
 * [`modifyAllocations`](#modifyallocations)
@@ -451,9 +453,20 @@ struct Allocation {
 }
 ```
 
-Although the `allocations` mapping can be used to fetch an `Allocation` directly, you'll notice a convention in the `AllocationManager` of using the `_getUpdatedAllocation` helper, instead. This helper reads an existing `Allocation`, then evaluates `block.number` against `Allocation.effectBlock` to determine whether or not to apply the `pendingDiff`. If the diff is applied, the helper returns an `Allocation` with an updated `currentMagnitude`.
+Although the `allocations` mapping can be used to fetch an `Allocation` directly, you'll notice a convention in the `AllocationManager` of using the `_getUpdatedAllocation` helper, instead. This helper reads an existing `Allocation`, then evaluates `block.number` against `Allocation.effectBlock` to determine whether or not to apply the `pendingDiff`. 
+* If the diff can be applied, the helper returns an `Allocation` with an updated `currentMagnitude` and zeroed out `pendingDiff` and `effectBlock` fields -- as if the modification has already been completed.
+* Otherwise, the `Allocation` is returned from storage unmodified.
 
-In cases where an `Allocation` has a completable `pendingDiff` in storage, this convention allows the `AllocationManager` to evaluate the `Allocation` as if the pending modification has already been completed.
+Generally, when an `Allocation` is mentioned in this doc (or used within the `AllocationManager.sol` contract), we are referring to the "Current" `Allocation` as defined above.
+
+#### Evaluating Whether an Allocation is "Slashable"
+
+Given an `operator` and an `Allocation` from a `strategy` to an AVS's `OperatorSet`, the `AllocationManager` uses the following criteria to determine whether the operator's allocation is slashable:
+1. The `operator` must be registered for the operator set, or if they are deregistered, they must still be slashable (See [Registration Status](#registration-status)).
+2. The AVS must have added the `strategy` to the operator set (See [`addStrategiesToOperatorSet`](#addstrategiestooperatorset) and [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset))
+3. The existing `Allocation` must have a nonzero `Allocation.currentMagnitude`
+
+If ALL of these are true, the `AllocationManager` will allow the AVS to slash the `operator's` `Allocation`.
 
 #### `modifyAllocations`
 
@@ -486,7 +499,7 @@ function modifyAllocations(
     onlyWhenNotPaused(PAUSED_MODIFY_ALLOCATIONS)
 ```
 
-_Note: this method can be called directly by an operator, or by a caller authorized by the operator via the `PermissionController`. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+_Note: this method can be called directly by an operator, or by a caller authorized by the operator. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 This function is called by an operator to EITHER increase OR decrease the slashable magnitude allocated from a strategy to an operator set. As input, the operator provides an operator set as the target, and a list of strategies and corresponding `newMagnitudes` to allocate. The `newMagnitude` value is compared against the operator's current `Allocation` for that operator set/strategy:
 * If `newMagnitude` is _greater than_ `Allocation.currentMagnitude`, this is an allocation
@@ -502,17 +515,14 @@ Allocation modifications play by different rules depending on a few factors. Rec
 
 **If we are handling a _decrease in magnitude_ (deallocation):**
 
-First, evaluate whether the operator's _existing allocation is currently slashable_ by the AVS. This is important because the AVS might be using the existing allocation to secure a task given to this operator. The existing allocation is slashable only if ALL of the following are true:
-1. The operator is registered for the operator set, or if they are deregistered, they are still slashable (See [Registration Status](#registration-status))
-2. The AVS has added the strategy to the operator set. (AVSs can update this - see [`addStrategiesToOperatorSet`](#addstrategiestooperatorset) and [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset))
-3. The existing allocation has a nonzero `currentMagnitude`
+First, evaluate whether the operator's _existing allocation is currently slashable_ by the AVS. This is important because the AVS might be using the existing allocation to secure a task given to this operator. See [Evaluating Whether an Allocation is "Slashable"](#evaluating-whether-an-allocation-is-slashable) for details.
 
-Now, _if the existing allocation is slashable_:
+Next, _if the existing allocation IS slashable_:
 
-* The `allocation.pendingDiff` is set, with an `allocation.effectBlock` equal to the current block plus the global `DEALLOCATION_DELAY`.
+* The `allocation.pendingDiff` is set, with an `allocation.effectBlock` equal to the current block plus `DEALLOCATION_DELAY + 1`. This means the existing allocation _remains slashable_ for `DEALLOCATION_DELAY` blocks.
 * The _operator set_ is pushed to the operator's `deallocationQueue` for that strategy, denoting that there is a pending deallocation for this `(operatorSet, strategy)`. This is an ordered queue that enforces deallocations are processed sequentially and is used both in this method and in [`clearDeallocationQueue`](#cleardeallocationqueue).
 
-Finally, _if the existing allocation is NOT slashable_, the deallocated amount is immediately **freed**. It is subtracted from the strategy's encumbered magnitude and can be used for subsequent allocations. This is the only type of update that does not result in a "pending modification." The rationale here is that if the existing allocation is not slashable, the AVS does not need it to secure tasks, and therefore does not need to enforce a deallocation delay.
+Finally, _if the existing allocation IS NOT slashable_, the deallocated amount is immediately **freed**. It is subtracted from the strategy's encumbered magnitude and can be used for subsequent allocations. This is the only type of update that does not result in a "pending modification." The rationale here is that if the existing allocation is not slashable, the AVS does not need it to secure tasks, and therefore does not need to enforce a deallocation delay.
 
 *Effects*:
 * For each `AllocateParams` element:
@@ -524,7 +534,7 @@ Finally, _if the existing allocation is NOT slashable_, the deallocated amount i
             * Adds the `operatorSetKey` to `allocatedSets[operator]` (if not present)
         * If the allocation now has a `currentMagnitude` of 0:
             * Removes `strategy` from the `allocatedStrategies[operator][operatorSetKey]` list
-            * If this list now has a lenght of 0, remove `operatorSetKey` from `allocatedSets[operator]`
+            * If this list now has a length of 0, remove `operatorSetKey` from `allocatedSets[operator]`
     * Emits an `AllocationUpdated` event
 
 *Requirements*:
@@ -555,39 +565,44 @@ Finally, _if the existing allocation is NOT slashable_, the deallocated amount i
 function clearDeallocationQueue(
     address operator,
     IStrategy[] calldata strategies,
-    uint16[] calldata numToComplete
+    uint16[] calldata numToClear
 )
     external
+    onlyWhenNotPaused(PAUSED_MODIFY_ALLOCATIONS)
 ```
 
-This function is used to complete pending deallocations for a list of strategies for an operator. The function takes a list of strategies and the number of pending deallocations to complete for each strategy. For each strategy, the function completes pending deallocations if their effect timestamps have passed.
+This function is used to complete any eligible pending deallocations for an operator. The function takes an operator, a list of strategies, and a corresponding number of pending deallocations to complete. 
 
-Completing a deallocation decreases the encumbered magnitude for the strategy, allowing them to make allocations with that magnitude. Encumbered magnitude must be decreased only upon completion as pending deallocations can be slashed before they are completed.
+Clearing pending deallocations plays an important role in [`modifyAllocations`](#modifyallocations), as completable deallocations represent magnitude that can be freed for re-allocation to a different operator set. This method exists as a convenience for operators that want to complete pending deallocations as a standalone operation. However, `modifyAllocations` will _automatically_ clear any eligible deallocations when processing an allocation modification for a given strategy.
+
+For each strategy, the method iterates over `deallocationQueue[operator][strategy]`:
+
+```solidity
+/// @dev For a strategy, keeps an ordered queue of operator sets that have pending deallocations
+/// These must be completed in order to free up magnitude for future allocation
+mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes32Deque)) internal deallocationQueue;
+```
+
+This queue contains a per-strategy ordered list of operator sets that, due to prior calls by the `operator` to `modifyAllocations`, have a pending decrease in slashable magnitude. For each operator set in the queue, the corresponding allocation for that operator set is evaluated. If its `effectBlock` has been reached, the deallocation is completed, freeing up the deallocated magnitude by subtracting it from `encumberedMagnitude[operator][strategy]`. The corresponding entry is then popped from the front of the queue.
+
+This method stops iterating when: the queue is empty, a deallocation is reached that cannot be completed yet, or when it has cleared `numToClear` entries from the queue.
 
 *Effects*:
-* For each `strategies` element, and for each `numToClear` element:
-    * Halts if the `numToClear` has been reached (i.e. `numCleared >= numToClear`) or if all deallocations have been cleared
-    * Checks if the pending deallocation's effect block has passed, and breaks the loop if not
-    * Calls internal function `_updateAllocationInfo()` to do the following:
-        * Updates `encumberedMagnitude` with `info.encumberedMagnitude` given a change, and emits an `EncumberedMagnitudeUpdated` if so
-        * If a pending modification remains:
-            * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
-            * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
-        * Else if the allocated magnitude is now 0:
-            * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
-            * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
-                * Removes the `operatorSetKey` from `allocatedSets` for a given operator
-    * Removes the now-completed deallocation for the `operatorSet` from `deallocationQueue`
-    * Increments `numCleared`
-* If the deallocation delay has passed for an allocation, update the allocation information to reflect the successful deallocation, and remove the deallocation from `deallocationQueue`
+* For each `strategy` and _completeable_ deallocation in `deallocationQueue[operator][strategy]`:
+    * Pops the corresponding operator set from the `deallocationQueue`
+    * Reduces `allocation.currentMagnitude` by the deallocated amount
+    * Sets `allocation.pendingDiff` and `allocation.effectBlock` to 0
+    * Adds the deallocated amount to the strategy's `encumberedMagnitude`
+    * Emits `EncumberedMagnitudeUpdated`
+    * Additionally, if the deallocation leaves `allocation.currentMagnitude` equal to zero:
+        * Removes `strategy` from the `allocatedStrategies[operator][operatorSetKey]` list
+        * If this list now has a length of 0, remove `operatorSetKey` from `allocatedSets[operator]`
 
 *Requirements*:
-* Pause status MUST NOT be on: `PAUSED_MODIFY_ALLOCATIONS`
-* Strategy list MUST be equal length to `numToClear` list
+* Pause status MUST NOT be set: `PAUSED_MODIFY_ALLOCATIONS`
+* Strategy list MUST be equal length of `numToClear` list
 
-*See [this blog post](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/) for more on the EigenLayer security model.*
-
-AVSs that detect misbehaving operators can slash operators as a punitive action. Slashing operations are proposed in the following format:
+#### `slashOperator`
 
 ```solidity
 /**
@@ -606,24 +621,9 @@ struct SlashingParams {
     uint256[] wadsToSlash;
     string description;
 }
-```
 
-An AVS specifies the `operator` to slash, the `operatorSet` against which the operator misbehaved, the `strategies` to slash, and proportion of each (represented by `wadsToSlash`). A `description` string allows the AVS to add context to the slash.
-
-#### `slashOperator`
-
-```solidity
 /**
- * @notice Called by an AVS to slash an operator for given operatorSetId, list of strategies, and wadToSlash.
- * For each given (operator, operatorSetId, strategy) tuple, bipsToSlash
- * bips of the operatorSet's slashable stake allocation will be slashed
- *
- * @param operator the address to slash
- * @param operatorSetId the ID of the operatorSet the operator is being slashed on behalf of
- * @param strategies the set of strategies to slash
- * @param wadToSlash the parts in 1e18 to slash, this will be proportional to the
- * operator's slashable stake allocation for the operatorSet
- * @param description the description of the slashing provided by the AVS for legibility
+ * @notice Called by an AVS to slash an operator in a given operator set
  */
 function slashOperator(
     address avs,
@@ -634,34 +634,19 @@ function slashOperator(
     checkCanCall(avs)
 ```
 
-This function is called by AVSs to slash an operator for a given operator set and list of strategies. The AVS provides the proportion of the operator's slashable stake allocation to slash for each strategy. The proportion is given in parts in `1e18` and is with respect to the operator's _current_ slashable stake allocation for the operator set (i.e. `wadsToSlash=5e17` means 50% of the operator's slashable stake allocation for the operator set will be slashed). The AVS also provides a description of the slashing for legibility by outside integrations.
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
-Slashing is instant and irreversable. Slashed funds remain unrecoverable in the protocol but will be burned/redistributed in a future release. Slashing by one operatorSet does not effect the slashable stake allocation of other operatorSets for the same operator and strategy.
+AVSs use slashing as a punitive disincentive for misbehavior. For details and examples of how slashing works, see [ELIP-002#Slashing of Unique Stake](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md#slashing-of-unique-stake). Note that whatever slashing criteria an AVS decides on, the only criteria enforced by the `AllocationManager` are those detailed above (see [Evaluating Whether an Allocation is "Slashable"](#evaluating-whether-an-allocation-is-slashable)).
 
-Slashing updates storage in a way that instantly updates all view functions to reflect the correct values.
+In order to slash an eligible operator, the AVS specifies which operator set the operator belongs to, the `strategies` the operator should be slashed for, and for each strategy, the _proportion of the operator's allocated magnitude_ that should be slashed (given by `wadsToSlash`). An optional `description` string allows the AVS to add context to the slash.
 
-Function arguments are provided as follows:
+Once triggered in the `AllocationManager`, slashing is instant and irreversable. For each slashed strategy, the operator's `maxMagnitude` and `encumberedMagnitude` are decreased, and the allocation made to the given operator set has its `currentMagnitude` reduced.
 
-```solidity
-/**
- * @notice Struct containing parameters to slashing
- * @param operator the address to slash
- * @param operatorSetId the ID of the operatorSet the operator is being slashed on behalf of
- * @param strategies the set of strategies to slash
- * @param wadsToSlash the parts in 1e18 to slash, this will be proportional to the operator's
- * slashable stake allocation for the operatorSet
- * @param description the description of the slashing provided by the AVS for legibility
- */
-struct SlashingParams {
-    address operator;
-    uint32 operatorSetId;
-    IStrategy[] strategies;
-    uint256[] wadsToSlash;
-    string description;
-}
-```
+There are two edge cases to note for this method:
+1. In the process of slashing an `operator` for a given `strategy`, if the `Allocation` being slashed has a `currentMagnitude` of 0, the call will NOT revert. Instead, the `strategy` is skipped and slashing continues with the next `strategy` listed. This is to prevent an edge case where slashing occurs on or around a deallocation's `effectBlock` -- if the call reverted, the entire slash would fail. Skipping allows any valid slashes to be processed without requiring resubmission.
+2. If the `operator` has a pending, non-completable deallocation, the deallocation's `pendingDiff` is reduced proportional to the slash. This ensures that when the deallocation is completed, less `encumberedMagnitude` is freed.
 
-Note that a slash is performed on a single operator and operator set at a time, but can take in any number of `strategies`. All of these strategies must be registered to the operator set.
+Once slashing is processed for a strategy, [slashed stake is burned via the `DelegationManager`](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md#burning-of-slashed-funds).
 
 *Effects*:
 * For each `params.strategies` element:
