@@ -166,8 +166,6 @@ function addStrategiesToOperatorSet(
     checkCanCall(avs)
 ```
 
-<!-- TODO: document what happens when an operator allocates and a strategy is added/removed _after_ allocation! (this is expected behavior) -->
-
 _Note: this method can be called directly by an AVS, or by a caller authorized by the AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 This function allows an AVS to add slashable strategies to a given operator set. If any strategy is already registered for the given operator set, the entire call will fail.
@@ -468,6 +466,8 @@ This function is called by an operator to EITHER increase OR decrease the slasha
 * If `newMagnitude` is _equal to_ `Allocation.currentMagnitude`, this is invalid (revert)
 
 Allocation modifications play by different rules depending on a few factors. Recall that at all times, the `encumberedMagnitude` for a strategy may not exceed that strategy's `maxMagnitude`. Additionally, note that _before processing a modification for a strategy,_ the `deallocationQueue` for that strategy is first cleared. This ensures any completable deallocations are processed first, freeing up magnitude for allocation. This process is further explained in [`clearDeallocationQueue`](#cleardeallocationqueue). 
+
+Finally, `modifyAllocations` does NOT require an allocation to consider whether its corresponding strategy is relevant to the operator set in question. This is primarily to cut down on complexity. Because [`removeStrategiesFromOperatorSet`](#removestrategiesfromoperatorset) always allows an AVS to _remove_ strategies from consideration, we always need to be sure an operator can initiate a _deallocation_ for such strategies. Although there's not a clear usecase for _allocating_ when a strategy is not included in an operator set, we elected not to check for this. It's possible some AVSs may announce a strategy is being added ahead of time specifically to encourage allocations in advance. **It is expected behavior** that an AVS adding a strategy to an operator set makes any existing allocations to that strategy instantly slashable.
 
 **If we are handling an _increase in magnitude_ (allocation):**
 
