@@ -15,9 +15,8 @@ Libraries and Mixins:
 | [`SlashingLib.sol`](../../src/contracts/libraries/SlashingLib.sol) | slashing math |
 | [`OperatorSetLib.sol`](../../src/contracts/libraries/OperatorSetLib.sol) | encode/decode operator sets |
 
-## Prerequisites
+## Prior Reading
 
-* [Introducing the EigenLayer Security Model](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/)
 * [ELIP-002: Slashing via Unique Stake and Operator Sets](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md)
 
 ## Overview
@@ -40,7 +39,7 @@ The `AllocationManager` manages registration and deregistration of operators to 
 
 ## Operator Sets
 
-Operator sets, as described in [Introducing the EigenLayer Security Model](https://www.blog.eigenlayer.xyz/introducing-the-eigenlayer-security-model/), are useful for AVSs to configure operator groupings which can be assigned different tasks, rewarded based on their strategy allocations, and slashed according to different rules. Operator sets are defined in [`libraries/OperatorSetLib.sol`](../../src/contracts/libraries/OperatorSetLib.sol):
+Operator sets, as described in [ELIP-002](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md#operator-sets), are useful for AVSs to configure operator groupings which can be assigned different tasks, rewarded based on their strategy allocations, and slashed according to different rules. Operator sets are defined in [`libraries/OperatorSetLib.sol`](../../src/contracts/libraries/OperatorSetLib.sol):
 
 ```solidity
 /**
@@ -359,9 +358,10 @@ For this reason, it is expected that many AVSs will require operators to **alloc
 
 It is only once an operator is both _registered for an operator set_ and _has an active allocation to that operator set_ that the associated AVS can slash actual stake from an operator.
 
+See [ELIP-002#Unique Stake Allocation & Deallocation](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md#unique-stake-allocation--deallocation) for additional context.
+
 **Concepts:**
-* [Max Magnitude](#max-magnitude)
-* [Allocations and Deallocations](#allocations-and-deallocations)
+* [Max vs Encumbered Magnitude](#max-vs-encumbered-magnitude)
 * [Evaluating the "Current" Allocation](#evaluating-the-current-allocation)
 * [Evaluating Whether an Allocation is "Slashable"](#evaluating-whether-an-allocation-is-slashable)
 
@@ -370,7 +370,7 @@ It is only once an operator is both _registered for an operator set_ and _has an
 * [`clearDeallocationQueue`](#cleardeallocationqueue)
 * [`slashOperator`](#slashoperator)
 
-#### Max Magnitude
+#### Max vs Encumbered Magnitude
 
 Operators allocate _magnitude_, which represents a proportion of their total stake. For a given strategy, the `AllocationManager` tracks two quantities, _max magnitude_ and _encumbered magnitude_:
 
@@ -395,45 +395,6 @@ mapping(address operator => mapping(IStrategy strategy => uint64)) public encumb
 ```
 
 An operator's max magnitude starts at `1 WAD` (`1e18`), and is decreased when they are slashed. Max magnitude represents "100%" of allocatable magnitude. When an operator allocates magnitude from a strategy to an operator set, their encumbered magnitude for that strategy increases. An operator cannot allocate > 100%; therefore, a strategy's encumbered magnitude can never exceed that strategy's max magnitude.
-
-#### Allocations and Deallocations
-
-Magnitude allocations are represented using the following struct:
-
-```solidity
-/**
- * @notice Defines allocation information from a strategy to an operator set, for an operator
- * @param currentMagnitude the current magnitude allocated from the strategy to the operator set
- * @param pendingDiff a pending change in magnitude, if it exists (0 otherwise)
- * @param effectBlock the block at which the pending magnitude diff will take effect
- */
-struct Allocation {
-    uint64 currentMagnitude;
-    int128 pendingDiff;
-    uint32 effectBlock;
-}
-```
-
-When an operator allocates or deallocates magnitude, these modifications become effective at a future block depending on the corresponding delay. Magnitude allocations and deallocations have 2 separate block-based delays:
-* An operator-specific _configurable allocation delay_ (See [`setAllocationDelay`](#setallocationdelay))
-* A _global deallocation delay_ (See [Parameterization](#parameterization))
-
-For UX and complexity reasons, operators can only have _one pending modification_ per `(operatorSet, strategy)`. For example, this means that as an operator, I can simultaneously have:
-* A pending stETH allocation to operator set A
-* A pending stETH allocation to operator set B
-
-However, the `AllocationManager` will NOT allow me to create _another_ pending stETH allocation/deallocation in operator set A. The existing pending allocation to operator set A must first reach its `effectBlock`.
-
-An operator's allocations and deallocations are tracked using the following state variables:
-
-```solidity
-/// @dev For an operator set and strategy, the current allocated magnitude and any pending modification
-mapping(address operator => mapping(bytes32 operatorSetKey => mapping(IStrategy strategy => Allocation))) internal allocations;
-
-/// @dev For a strategy, keeps an ordered queue of operator sets that have pending deallocations
-/// These must be completed in order to free up magnitude for future allocation
-mapping(address operator => mapping(IStrategy strategy => DoubleEndedQueue.Bytes32Deque)) internal deallocationQueue;
-```
 
 #### Evaluating the "Current" Allocation
 
@@ -640,7 +601,7 @@ AVSs use slashing as a punitive disincentive for misbehavior. For details and ex
 
 In order to slash an eligible operator, the AVS specifies which operator set the operator belongs to, the `strategies` the operator should be slashed for, and for each strategy, the _proportion of the operator's allocated magnitude_ that should be slashed (given by `wadsToSlash`). An optional `description` string allows the AVS to add context to the slash.
 
-Once triggered in the `AllocationManager`, slashing is instant and irreversable. For each slashed strategy, the operator's `maxMagnitude` and `encumberedMagnitude` are decreased, and the allocation made to the given operator set has its `currentMagnitude` reduced.
+Once triggered in the `AllocationManager`, slashing is instant and irreversable. For each slashed strategy, the operator's `maxMagnitude` and `encumberedMagnitude` are decreased, and the allocation made to the given operator set has its `currentMagnitude` reduced. See [TODO - Accounting Doc]() for details on how slashed amounts are calculated.
 
 There are two edge cases to note for this method:
 1. In the process of slashing an `operator` for a given `strategy`, if the `Allocation` being slashed has a `currentMagnitude` of 0, the call will NOT revert. Instead, the `strategy` is skipped and slashing continues with the next `strategy` listed. This is to prevent an edge case where slashing occurs on or around a deallocation's `effectBlock` -- if the call reverted, the entire slash would fail. Skipping allows any valid slashes to be processed without requiring resubmission.
@@ -649,38 +610,32 @@ There are two edge cases to note for this method:
 Once slashing is processed for a strategy, [slashed stake is burned via the `DelegationManager`](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md#burning-of-slashed-funds).
 
 *Effects*:
-* For each `params.strategies` element:
-    * Calculates magnitude to slash by multiplying current magnitude by the provided `wadsToSlash` for the given strategy, and subtracts this value from `allocation.currentMagnitude`, `info.maxMagnitude`, and `info.encumberedMagnitude`
-    * If there is a pending deallocation:
-        * Reduces `allocation.pendingDiff` proportional to `wadsToSlash` for the given strategy
-        * Emits an `AllocationUpdated` event
-    * Calls internal function `_updateAllocationInfo()` to do the following:
-        * Updates `encumberedMagnitude` with `info.encumberedMagnitude` given a change, and emits an `EncumberedMagnitudeUpdated` if so
-        * If a pending modification remains:
-            * Adds `strategy` to `allocatedStrategies` for a given `operator` and `operatorSetKey` if not already present
-            * Adds `operatorSetKey` to `allocatedSets` for a given `operator` if not already present
-        * Else if the allocated magnitude is now 0:
-            * Removes `strategy` from `allocatedStrategies` for a given `operator` and `operatorSetKey`
-            * If that was the last `strategy` that the operator has allocated for that given `operatorSetKey`:
-                * Removes the `operatorSetKey` from `allocatedSets` for a given operator
-    * Emits an `AllocationUpdated` event
-    * Pushes a new entry to `_maxMagnitudeHistory` for a given `operator` and `strategy` with the current block number and new max magnitude
-    * Emits a `MaxMagnitudeUpdated` event
-    * Calls [`DelegationManager`](./DelegationManager.md) function `burnOperatorShares()`
-* Emits an `OperatorSlashed` event
+* Given an `operator` and `operatorSet`, then for each `params.strategies` element and its corresponding `allocation`:
+    * Calculates magnitude to slash by multiplying current magnitude by the provided `wadsToSlash`
+    * Reduce `allocation.currentMagnitude` by the slashed magnitude
+        * Emit an `AllocationUpdated` event
+    * Reduce the operator's `encumberedMagnitude` for this strategy by the slashed magnitude
+        * Emit an `EncumberedMagnitudeUpdated` event
+    * Push an entry to the operator's `maxMagnitudeHistory`, reducing their `maxMagnitude` by the slashed magnitude
+        * Emit a `MaxMagnitudeUpdated` event
+    * If the `allocation` has a pending, non-completable deallocation, additionally reduce `allocation.pendingDiff` by the same proportion and emit an `AllocationUpdated` event
+    * If the `allocation` now has a `currentMagnitude` of 0:
+        * Removes `strategy` from the `allocatedStrategies[operator][operatorSetKey]` list
+        * If this list now has a length of 0, remove `operatorSetKey` from `allocatedSets[operator]`
+    * Calls [`DelegationManager.burnOperatorShares`](./DelegationManager.md#burnoperatorshares)
+* Emit an `OperatorSlashed` event
 
 *Requirements*:
 * Pause status MUST NOT be set: `PAUSED_OPERATOR_SLASHING`
-* Caller MUST be authorized, either as the AVS or an admin/appointee (see the [PermissionController](../permissions/PermissionController.md))
+* Caller MUST be authorized, either as the AVS itself or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 * Operator set MUST be registered for the AVS
 * Operator MUST BE slashable, i.e.:
-    * Operator is registreed for the operator set, *OR*
+    * Operator is registered for the operator set, *OR*
     * The operator's `DEALLOCATION_DELAY` has not yet completed
 * `params.strategies` MUST be in ascending order (to ensure no duplicates)
 * For each `params.strategies` element:
-    * `0` MUST BE less than `wadsToSlash` which MUST BE less than `1e18`
+    * `wadsToSlash` MUST be within the bounds `(0, 1e18]`
     * Operator set MUST contain the strategy
-    * Operator SHOULD have allocated magnitude > 0 to the operator set for this strategy, else `continue`
 
 ---
 
