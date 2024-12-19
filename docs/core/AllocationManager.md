@@ -641,13 +641,19 @@ Once slashing is processed for a strategy, [slashed stake is burned via the `Del
 
 ## Config
 
+**Methods:**
+* [`setAllocationDelay`](#setallocationdelay)
+* [`setAVSRegistrar`](#setavsregistrar)
+
 #### `setAllocationDelay`
 
 ```solidity
 /**
- * @notice Called by operators or the delegation manager to set their allocation delay.
+ * @notice Called by the delegation manager OR an operator to set an operator's allocation delay.
+ * This is set when the operator first registers, and is the number of blocks between an operator
+ * allocating magnitude to an operator set, and the magnitude becoming slashable.
  * @param operator The operator to set the delay on behalf of.
- * @param delay The allocation delay in seconds.
+ * @param delay the allocation delay in blocks
  */
 function setAllocationDelay(
     address operator,
@@ -656,17 +662,13 @@ function setAllocationDelay(
     external
 ```
 
-This function sets an operator's allocation delay.
+_Note: IF NOT CALLED BY THE `DelegationManager`, this method can be called directly by an operator, or by a caller authorized by the operator. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
-The DelegationManager calls this upon operator registration for all new operators created after the slashing release. Operators can also update their allocation delay, or set it for the first time if they joined before the slashing release.
+This function sets an operator's allocation delay, in blocks. This delay can be updated by the operator once set. Both the initial setting of this value and any further updates _take `ALLOCATION_CONFIGURATION_DELAY` blocks_ to take effect. Because having a delay is a requirement to allocating slashable stake, this effectively means that once the slashing release goes live, no one will be able to allocate slashable stake for at least `ALLOCATION_CONFIGURATION_DELAY` blocks.
 
-The allocation delay takes effect in `ALLOCATION_CONFIGURATION_DELAY` blocks.
+The `DelegationManager` calls this upon operator registration for all new operators created after the slashing release. For operators that existed in the `DelegationManager` _prior_ to the slashing release, **they will need to call this method to configure an allocation delay prior to allocating slashable stake to any AVS**.
 
-The allocation delay can be any `uint32`, including 0.
-
-The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with.
-
-This function must be called before allocating stake via `modifyAllocations()`.
+The allocation delay's primary purpose is to give stakers delegated to an operator the chance to withdraw their stake before the operator can change the risk profile to something they're not comfortable with. However, operators can choose to configure this delay however they want - including setting it to 0.
 
 *Effects*:
 * Sets the operator's `pendingDelay` to the proposed `delay`, and save the `effectBlock` at which the `pendingDelay` can be activated
@@ -677,11 +679,17 @@ This function must be called before allocating stake via `modifyAllocations()`.
 
 *Requirements*:
 * Caller MUST BE either the DelegationManager, or a registered operator
-    * An admin and/or appointee for the operator can also call this function (see the [PermissionController](../permissions/PermissionController.md))
+    * An admin and/or appointee for the operator can also call this function (see [`PermissionController.md`](../permissions/PermissionController.md))
 
 #### `setAVSRegistrar`
 
 ```solidity
+/**
+ * @notice Called by an AVS to configure the address that is called when an operator registers
+ * or is deregistered from the AVS's operator sets. If not set (or set to 0), defaults
+ * to the AVS's address.
+ * @param registrar the new registrar address
+ */
 function setAVSRegistrar(
     address avs,
     IAVSRegistrar registrar
@@ -690,19 +698,39 @@ function setAVSRegistrar(
     checkCanCall(avs)
 ```
 
+_Note: this method can be called directly by an AVS, or by a caller authorized by the AVS. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
+
 Sets the `registrar` for a given `avs`. Note that if the registrar is set to 0, `getAVSRegistrar` will return the AVS's address.
 
-The `avs => registrar` mapping is saved in the mapping below:
+The avs registrar is called when operators register to or deregister from an operator set. From [`IAVSRegistrar.sol`](../../src/contracts/interfaces/IAVSRegistrar.sol), the avs registrar should use the following interface:
 
 ```solidity
-/// @dev Contains the AVS's configured registrar contract that handles registration/deregistration
-/// Note: if set to 0, defaults to the AVS's address
-mapping(address avs => IAVSRegistrar) internal _avsRegistrar;
+interface IAVSRegistrar {
+    /**
+     * @notice Called by the AllocationManager when an operator wants to register
+     * for one or more operator sets. This method should revert if registration
+     * is unsuccessful.
+     * @param operator the registering operator
+     * @param operatorSetIds the list of operator set ids being registered for
+     * @param data arbitrary data the operator can provide as part of registration
+     */
+    function registerOperator(address operator, uint32[] calldata operatorSetIds, bytes calldata data) external;
+
+    /**
+     * @notice Called by the AllocationManager when an operator is deregistered from
+     * one or more operator sets. If this method reverts, it is ignored.
+     * @param operator the deregistering operator
+     * @param operatorSetIds the list of operator set ids being deregistered from
+     */
+    function deregisterOperator(address operator, uint32[] calldata operatorSetIds) external;
+}
 ```
+
+Note that when an operator registers, registration will FAIL if the call to `IAVSRegistrar` reverts. However, when an operator deregisters, a revert in `deregisterOperator` is ignored.
 
 *Effects*:
 * Sets `_avsRegistrar[avs]` to `registrar`
 * Emits an `AVSRegistrarSet` event
 
 *Requirements*:
-* None
+* Caller MUST be authorized, either as the AVS itself or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
