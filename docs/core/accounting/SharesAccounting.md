@@ -6,14 +6,29 @@
 
 ## Prerequisite Documents
 
+## Terminology
 
+The word "shares" in EigenLayer has historically referred to the amount of shares a Staker receives upon depositing assets either through the `StrategyManager` or `EigenPodManager`. Outside of some conversion ratios in the `StrategyManager` to account for rebasing tokens, shares roughly correspond 1:1 with deposit amounts (i.e. 1e18 shares in the `beaconChainETHStrategy` corresponds to 1 ETH of assets). When delegating to an operator or queueing a withdrawal, the `DelegationManager` reads deposit shares from the `StrategyManager` or `EigenPodManager` to determine how many shares to delegate (or undelegate).
 
-## Background (Pre-Slashing Upgrade)
+With the slashing release, there is a need to differentiate "classes" of shares.
 
-The usage of the terminology `shares` in EigenLayer has historically referred to the amount of Strategy shares a Staker receives upon depositing assets either through the StrategyManager or EigenPodManager.
-In the case of EigenPodManager and native BeaconChain ETH, shares are 1:1 corresponding with ETH amounts.
-For each Strategy, there is a corresponding conversion ratio of Strategy shares to the underlying ERC20 asset and can be read directly off the contract through `StrategyBase.sharesToUnderlyingView`. These shares values are stored per Staker per Strategy in the StrategyManager; in the case of native ETH, podOwner shares are stored in the EigenPodManager. 
-Operator shares, also frequently termed delegated shares, is the summation of all shares of the operator's delegated stakers for a given Strategy.
+**Deposit shares**: 
+
+Formerly known as "shares," these are the same shares used before the slashing release. They continue to be managed by the `StrategyManager` and `EigenPodManager`, and roughly correspond 1:1 with deposited assets.
+
+**Withdrawable shares**: 
+
+When an operator is slashed, the slash is applied to their stakers _asynchronously_ (otherwise, slashing would require iterating over each of an operator's stakers; this is prohibitively expensive). 
+
+The `DelegationManager` must find a common representation for the deposit shares of many stakers, each of which may have experienced different amounts of slashing depending on which operator they are delegated to, and when they delegated. This common representation is achieved in part through a value called the `depositScalingFactor`: a per-staker, per-strategy value that scales a staker's deposit shares as they deposit assets over time.
+
+When a staker does just about anything (changing their delegated operator, queueing/completing a withdrawal, depositing new assets), the `DelegationManager` converts their _deposit shares_ to _withdrawable shares_ by applying the staker's `depositScalingFactor` and the current _slashing factor_ (a per-strategy scalar primarily derived from the amount of slashing an operator has received in the `AllocationManager`).
+
+These _withdrawable shares_ are used to determine how many of a staker's deposit shares are actually able to be withdrawn from the protocol, as well as how many shares can be delegated to an operator. A staker's withdrawable shares are not reflected anywhere in storage; they are calculated on-demand.
+
+**Operator shares**:
+
+_Operator shares_ are derivative of _withdrawable shares_. When a staker delegates to an operator, they are delegating their _withdrawable shares_. Thus, an operator's _operator shares_ represent the sum of all of their stakers' _withdrawable shares_. Note that when a staker first delegates to an operator, this is a special case where _deposit shares_ == _withdrawable shares_. If the staker deposits additional assets later, this case will not hold if slashing was experienced in the interim.
 
 We can write this a bit more formally with the following:
 

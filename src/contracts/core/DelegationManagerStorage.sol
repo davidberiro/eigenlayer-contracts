@@ -69,6 +69,8 @@ abstract contract DelegationManagerStorage is IDelegationManager {
     mapping(address operator => mapping(IStrategy strategy => uint256 shares)) public operatorShares;
 
     /// @notice Returns the operator details for a given `operator`.
+    /// Note: two of the `OperatorDetails` fields are deprecated. The only relevant field
+    /// is `OperatorDetails.delegationApprover`.
     mapping(address operator => OperatorDetails) internal _operatorDetails;
 
     /// @notice Returns the `operator` a `staker` is delgated to, or address(0) if not delegated.
@@ -103,11 +105,11 @@ abstract contract DelegationManagerStorage is IDelegationManager {
     mapping(address staker => mapping(IStrategy strategy => DepositScalingFactor)) internal _depositScalingFactor;
 
     /// @notice Returns a list of queued withdrawals for a given `staker`.
-    /// @dev Entrys are removed when the withdrawal is completed.
+    /// @dev Entries are removed when the withdrawal is completed.
     /// @dev This variable only reflects withdrawals that were made after the slashing release.
     mapping(address staker => EnumerableSet.Bytes32Set withdrawalRoots) internal _stakerQueuedWithdrawalRoots;
 
-    /// @notice Returns the details of a queued withdrawal for a given `staker` and `withdrawalRoot`.
+    /// @notice Returns the details of a queued withdrawal given by `withdrawalRoot`.
     /// @dev This variable only reflects withdrawals that were made after the slashing release.
     mapping(bytes32 withdrawalRoot => Withdrawal withdrawal) public queuedWithdrawals;
 

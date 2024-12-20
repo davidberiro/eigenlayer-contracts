@@ -228,13 +228,10 @@ interface IDelegationManager is ISignatureUtils, IDelegationManagerErrors, IDele
     /**
      * @notice Caller delegates their stake to an operator.
      * @param operator The account (`msg.sender`) is delegating its assets to for use in serving applications built on EigenLayer.
-     * @param approverSignatureAndExpiry Verifies the operator approves of this delegation
-     * @param approverSalt A unique single use value tied to an individual signature.
-     * @dev The approverSignatureAndExpiry is used in the event that the operator's `delegationApprover` address is set to a non-zero value.
-     * @dev In the event that `approverSignatureAndExpiry` is not checked, its content is ignored entirely; it's recommended to use an empty input
-     * in this case to save on complexity + gas costs
-     * @dev If the staker delegating has shares in a strategy that the operator was slashed 100% for (the operator's maxMagnitude = 0),
-     * then delegation is blocked and will revert.
+     * @param approverSignatureAndExpiry (optional) Verifies the operator approves of this delegation
+     * @param approverSalt (optional) A unique single use value tied to an individual signature.
+     * @dev The signature/salt are used ONLY if the operator has configured a delegationApprover.
+     * If they have not, these params can be left empty.
      */
     function delegateTo(
         address operator,

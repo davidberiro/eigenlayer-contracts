@@ -14,6 +14,7 @@ Libraries and Mixins:
 | [`Pausable.sol`](../../src/contracts/permissions/Pausable.sol) | |
 | [`SlashingLib.sol`](../../src/contracts/libraries/SlashingLib.sol) | slashing math |
 | [`OperatorSetLib.sol`](../../src/contracts/libraries/OperatorSetLib.sol) | encode/decode operator sets |
+| [`Snapshots.sol`](../../src/contracts/libraries/Snapshots.sol) | historical state |
 
 ## Prior Reading
 
@@ -28,10 +29,10 @@ The `AllocationManager` manages registration and deregistration of operators to 
 
 ## Parameterization
 
-* `ALLOCATION_CONFIGURATION_DELAY`: The delay in blocks (estimated) before allocations take effect.
+* `ALLOCATION_CONFIGURATION_DELAY`: The delay in blocks before allocations take effect.
     * Mainnet: `126000 blocks` (17.5 days).
     * Testnet: `75 blocks` (15 minutes).
-* `DEALLOCATION_DELAY`: The delay in blocks (estimated) before deallocations take effect.
+* `DEALLOCATION_DELAY`: The delay in blocks before deallocations take effect.
     * Mainnet: `100800 blocks` (14 days).
     * Testnet: `50 blocks` (10 minutes).
 

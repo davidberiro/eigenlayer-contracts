@@ -1,46 +1,60 @@
 ## DelegationManager
 
-| File | Type | Proxy |
-| -------- | -------- | -------- |
-| [`DelegationManager.sol`](../../src/contracts/core/DelegationManager.sol) | Singleton | Transparent proxy |
+| File | Notes |
+| -------- | -------- |
+| [`DelegationManager.sol`](../../src/contracts/core/DelegationManager.sol) | |
+| [`DelegationManagerStorage.sol`](../../src/contracts/core/DelegationManagerStorage.sol) | state variables |
+| [`IDelegationManager.sol`](../../src/contracts/interfaces/IDelegationManager.sol) | interface |
 
-The primary functions of the `DelegationManager` are (i) to allow Stakers to delegate/undelegate to/from Operators, (ii) handle withdrawals and withdrawal processing for assets in both the `StrategyManager` and `EigenPodManager`, and (iii) to manage accounting around slashing for Stakers and Operators.
+Libraries and Mixins:
 
-The `DelegationManager` is the intersection between the two sides of the protocol:
-* It handles share burning directives sent by the `AllocationManager` when Operators are slashed by AVSs.
-* It tracks share/delegation accounting changes when Stakers deposit assets using the `StrategyManager` and `EigenPodManager` (or withdraw them via the `DelegationManager`).
+| File | Notes |
+| -------- | -------- |
+| [`PermissionControllerMixin.sol`](../../src/contracts/mixins/PermissionControllerMixin.sol) | account delegation |
+| [`SignatureUtils.sol`](../../src/contracts/mixins/SignatureUtils.sol) | signature validation |
+| [`Pausable.sol`](../../src/contracts/permissions/Pausable.sol) | |
+| [`SlashingLib.sol`](../../src/contracts/libraries/SlashingLib.sol) | slashing math |
+| [`Snapshots.sol`](../../src/contracts/libraries/Snapshots.sol) | historical state |
 
-Whether a Staker is currently delegated to an Operator or not, the `DelegationManager` keeps track of a Staker's withdrawable shares by tracking their "deposit scaling factor" as well as their "slashingFactor" for the strategy. These values allow the `DelegationManager` to account for slashing, serving as the primary conversion vehicle between a Staker's raw deposited assets and the amount they can actually delegate or withdraw. 
+## Prior Reading
 
-This contract handles 3 types of shares:
-1. delegated/operator shares: The delegated shares of an operator read from 
-Exists in storage: `DelegationManager.operatorShares`
-2. deposit shares: The amount of Strategy shares they have been awarded from depositing the actual underlying asset.
-Exists in storage: `StrategyManager.stakerDepositShares` and `EigenPodManager.podOwnerDepositShares`
-3. withdrawableShares: How many shares a staker can withdraw given their deposit shares less any slashing that has occurred to their stake.
-Does not exist in storage but is read from `DelegationManager.getWithdrawableShares`
+* [ELIP-002: Slashing via Unique Stake and Operator Sets](https://github.com/eigenfoundation/ELIPs/blob/main/ELIPs/ELIP-002.md)
+* [Shares Accounting](./accounting/SharesAccounting.md)
 
-See [`docs/core/SharesAccounting.md`](./SharesAccounting.md) for details.
+## Overview
 
+The `DelegationManager` is the intersection between the two sides of the protocol. It (i) allows Stakers to delegate/undelegate to/from Operators, (ii) handles withdrawals and withdrawal processing for assets in both the `StrategyManager` and `EigenPodManager`, and (iii) manages accounting around slashing for Stakers and Operators.
 
-#### High-level Concepts
+When Operators are slashed by AVSs, it receives share burning directives from the `AllocationManager`. When Stakers deposit assets using the `StrategyManager/EigenPodManager`, it tracks share/delegation accounting changes. The `DelegationManager` combines inputs from both sides of the protocol into a Staker's "deposit scaling factor," which serves as the primary conversion vehicle between a Staker's _raw deposited assets_ and the _amount they can withdraw_.
 
-This document organizes methods according to the following themes (click each to be taken to the relevant section):
+The `DelegationManager's` responsibilities can be broken down into the following concepts:
 * [Becoming an Operator](#becoming-an-operator)
-* [Delegating to an Operator](#delegating-to-an-operator)
-* [Undelegating and Withdrawing](#undelegating-and-withdrawing)
-* [Accounting](#accounting)
-* [Slashing](#slashing)
-* [System Configuration](#system-configuration)
+* [Delegation and Withdrawals](#delegation-and-withdrawals)
+* [Slashing and Accounting](#slashing-and-accounting)
 
-#### Important state variables
+## Parameterization
 
-*Delegation and Share Accounting:*
+* `MIN_WITHDRAWAL_DELAY_BLOCKS`: The delay in blocks before withdrawals can be completed.
+    * Mainnet: `100800 blocks` (14 days).
+    * Testnet: `50 blocks` (10 minutes).
+* `beaconChainETHStrategy`: a pseudo strategy used to represent beacon chain ETH internally. This is not a real contract!
+    * Value: `0xbeaC0eeEeeeeEEeEeEEEEeeEEeEeeeEeeEEBEaC0`
+
+---
+
+## Becoming an Operator
+
+The `DelegationManager` tracks operator-related state in the following mappings:
 
 ```solidity
 /// @notice Returns the `operator` a `staker` is delgated to, or address(0) if not delegated.
 /// Note: operators are delegated to themselves
 mapping(address staker => address operator) public delegatedTo;
+
+/// @notice Returns the operator details for a given `operator`.
+/// Note: two of the `OperatorDetails` fields are deprecated. The only relevant field
+/// is `OperatorDetails.delegationApprover`.
+mapping(address operator => OperatorDetails) internal _operatorDetails;
 
 /**
  * @notice Tracks the current balance of shares an `operator` is delegated according to each `strategy`. 
@@ -52,63 +66,9 @@ mapping(address staker => address operator) public delegatedTo;
  * operatorShares[operator] = sum(withdrawable shares of all stakers delegated to operator)
  */
 mapping(address operator => mapping(IStrategy strategy => uint256 shares)) public operatorShares;
-
-/// @notice Returns the scaling factor applied to a `staker` for a given `strategy`
-mapping(address staker => mapping(IStrategy strategy => DepositScalingFactor)) internal _depositScalingFactor;
-
-/// @notice Contains history of the total cumulative staker withdrawals for an operator and a given strategy.
-/// Used to calculate burned StrategyManager shares when an operator is slashed.
-/// @dev Stores scaledShares instead of total withdrawn shares to track current slashable shares, dependent on the maxMagnitude
-mapping(address operator => mapping(IStrategy strategy => Snapshots.DefaultZeroHistory)) internal
-    _cumulativeScaledSharesHistory;
 ```
 
-*Withdrawal Processing:*
-
-
-```solidity
-/// @notice Minimum withdrawal delay in blocks until a queued withdrawal can be completed.
-uint32 internal immutable MIN_WITHDRAWAL_DELAY_BLOCKS;
-
-/// @dev Returns whether a withdrawal is pending for a given `withdrawalRoot`.
-/// @dev This variable will be deprecated in the future, values should only be read or deleted.
-mapping(bytes32 withdrawalRoot => bool pending) public pendingWithdrawals;
-
-/// @notice Returns a list of queued withdrawals for a given `staker`.
-/// @dev Entrys are removed when the withdrawal is completed.
-/// @dev This variable only reflects withdrawals that were made after the slashing release.
-mapping(address staker => EnumerableSet.Bytes32Set withdrawalRoots) internal _stakerQueuedWithdrawalRoots;
-
-/// @notice Returns the details of a queued withdrawal for a given `staker` and `withdrawalRoot`.
-/// @dev This variable only reflects withdrawals that were made after the slashing release.
-mapping(bytes32 withdrawalRoot => Withdrawal withdrawal) public queuedWithdrawals;
-```
-
-*Burning of Operator Shares:*
-
-```solidity
-/// @notice Contains history of the total cumulative staker withdrawals for an operator and a given strategy.
-/// Used to calculate burned StrategyManager shares when an operator is slashed.
-/// @dev Stores scaledShares instead of total withdrawn shares to track current slashable shares, dependent on the maxMagnitude
-mapping(address operator => mapping(IStrategy strategy => Snapshots.DefaultZeroHistory)) internal
-    _cumulativeScaledSharesHistory;
-```
-
-<!-- * A similar mapping exists in the `StrategyManager`, but the `DelegationManager` additionally tracks beacon chain ETH delegated via the `EigenPodManager`. The "beacon chain ETH" strategy gets its own special address for this mapping: `0xbeaC0eeEeeeeEEeEeEEEEeeEEeEeeeEeeEEBEaC0`. -->
-
-#### Helpful definitions
-
-* `isDelegated(address staker) -> (bool)`
-    * True if `delegatedTo[staker] != address(0)`
-* `isOperator(address operator) -> (bool)` 
-    * True if `delegatedTo[operator] == operator`
-* `beaconChainETHStrategy` is not an actually deployed Strategy contract. It is a hardcoded value that represents the shares in the `EigenPodManager` that helps to unify some of the logic surrounding operator shares, withdrawals, and slashing.
----
-
-### Becoming an Operator
-
-Operators interact with the following functions to become an Operator:
-
+**Methods**:
 * [`DelegationManager.registerAsOperator`](#registerasoperator)
 * [`DelegationManager.modifyOperatorDetails`](#modifyoperatordetails)
 * [`DelegationManager.updateOperatorMetadataURI`](#updateoperatormetadatauri)
@@ -116,6 +76,17 @@ Operators interact with the following functions to become an Operator:
 #### `registerAsOperator`
 
 ```solidity
+/**
+ * @notice Registers the caller as an operator in EigenLayer.
+ * @param initDelegationApprover is an address that, if set, must provide a signature when stakers delegate
+ * to an operator.
+ * @param allocationDelay The delay before allocations take effect.
+ * @param metadataURI is a URI for the operator's metadata, i.e. a link providing more details on the operator.
+ *
+ * @dev Once an operator is registered, they cannot 'deregister' as an operator, and they will forever be considered "delegated to themself".
+ * @dev This function will revert if the caller is already delegated to an operator.
+ * @dev Note that the `metadataURI` is *never stored * and is only emitted in the `OperatorMetadataURIUpdated` event
+ */
 function registerAsOperator(
     address initDelegationApprover,
     uint32 allocationDelay,
@@ -124,60 +95,158 @@ function registerAsOperator(
 ```
 
 Registers the caller as an Operator in EigenLayer. The new Operator provides the following input parameters:
-* `address initDelegationApprover`: if set to non-zero address, this address must sign and approve new delegation from Stakers to this Operator *(optional)*
-* `uint32 allocationDelay`: configures the delay on allocations(in blocks) to take effect in the AllocationManager. This is stored and configurable in the AllocationManager but is included in here in the operator registration interface as convenience.
-More details on allocations and unique security can be found in the [`AllocationManager`](./AllocationManager.md)
+* `address initDelegationApprover`: *(OPTIONAL)* if set to a non-zero address, this address must sign and approve new delegation from Stakers to this Operator (See [`delegateTo`](#delegateto))
+* `uint32 allocationDelay`: the delay (in blocks) before slashable stake allocations will take effect. This is passed to the `AllocationManager` (See [`AllocationManager.md#setAllocationDelay`](./AllocationManager.md#setallocationdelay))
 * `string calldata metadataURI`: emits this input in the event `OperatorMetadataURIUpdated`. Does not store the value anywhere.
 
-`registerAsOperator` cements the Operator's delegation approver and allocation delay in storage, and self-delegates the Operator to themselves - permanently marking the caller as an Operator. They cannot "deregister" as an Operator - however, they can exit the system by withdrawing their funds via `queueWithdrawals`.
+`registerAsOperator` cements the Operator's delegation approver and allocation delay in storage, and self-delegates the Operator to themselves - permanently marking the caller as an Operator. They cannot "deregister" as an Operator - however, if they have deposited funds, they can still withdraw them (See [Delegation and Withdrawals](#delegation-and-withdrawals)).
 
 *Effects*:
-* Sets `OperatorDetails` for the Operator in question. 2 fields in the struct are deprecated and the only value used is the delegationApprover which is passed in as calldata
-* Delegates the Operator to itself
-* If the Operator has deposit shares in the `EigenPodManager`, the `DelegationManager` adds this shares amount to the Operator's shares for the beaconChainETHstrategy.
-* For each of the strategies in the `StrategyManager`, if the Operator holds deposit shares in that strategy they are added to the Operator's shares under the corresponding strategy.
-* For each `Strategy` including the beaconChainETHStrategy that increased delegated shares, update the depositScalingFactor for the Operator.
+* Sets `_operatorDetails[operator].delegationApprover`. Note that the other `OperatorDetails` fields are deprecated; only the `delegationApprover` is used.
+* Delegates the Operator to themselves
+    * Tabulates any deposited shares across the `EigenPodManager` and `StrategyManager`, and delegates these shares to themselves
+    * For each strategy in which the Operator holds assets, updates the Operator's `depositScalingFactor` for that strategy
 
 *Requirements*:
 * Caller MUST NOT already be delegated
 * Pause status MUST NOT be set: `PAUSED_NEW_DELEGATION`
-* `slashingFactor` for the strategy MUST be non-zero
+* For each strategy in which the Operator holds assets, their `slashingFactor` for that strategy MUST be non-zero.
 
 #### `modifyOperatorDetails`
 
 ```solidity
-function modifyOperatorDetails(address operator, address newDelegationApprover) external checkCanCall(operator)
+/**
+ * @notice Updates an operator's stored `delegationApprover`.
+ * @param operator is the operator to update the delegationApprover for
+ * @param newDelegationApprover is the new delegationApprover for the operator
+ *
+ * @dev The caller must have previously registered as an operator in EigenLayer.
+ */
+function modifyOperatorDetails(
+    address operator, 
+    address newDelegationApprover
+) 
+    external 
+    checkCanCall(operator)
 ```
+
+_Note: this method can be called directly by an operator, or by a caller authorized by the operator. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 Allows an Operator to update their stored `delegationApprover`.
 
 *Requirements*:
 * `address operator` MUST already be an Operator.
-* Caller MUST have permission to call on behalf of the Operator.
+* Caller MUST be authorized: either the operator themselves, or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 
 #### `updateOperatorMetadataURI`
 
 ```solidity
-function updateOperatorMetadataURI(address operator, string calldata metadataURI) external checkCanCall(operator)
+/**
+ * @notice Called by an operator to emit an `OperatorMetadataURIUpdated` event indicating the information has updated.
+ * @param operator The operator to update metadata for
+ * @param metadataURI The URI for metadata associated with an operator
+ * @dev Note that the `metadataURI` is *never stored * and is only emitted in the `OperatorMetadataURIUpdated` event
+ */
+function updateOperatorMetadataURI(
+    address operator, 
+    string calldata metadataURI
+) 
+    external 
+    checkCanCall(operator)
 ```
+
+_Note: this method can be called directly by an operator, or by a caller authorized by the operator. See [`PermissionController.md`](../permissions/PermissionController.md) for details._
 
 Allows an Operator to emit an `OperatorMetadataURIUpdated` event. No other state changes occur.
 
 *Requirements*:
 * `address operator` MUST already be an Operator.
-* Caller MUST have permission to call on behalf of the Operator.
+* Caller MUST be authorized: either the operator themselves, or an admin/appointee (see [`PermissionController.md`](../permissions/PermissionController.md))
 
 ---
 
-### Delegating to an Operator
+## Delegation and Withdrawals
 
-Stakers interact with the following functions to delegate their shares to an Operator:
+**Concepts**:
+* [Enforcing a Withdrawal Delay]() TODO
+* [Legacy vs New Withdrawals]() TODO
+* [Getting the Slashing Factor]() TODO
 
+**Methods**:
 * [`DelegationManager.delegateTo`](#delegateto)
+* [`DelegationManager.undelegate`](#undelegate)
+* [`DelegationManager.redelegate`](#redelegate)
+* [`DelegationManager.queueWithdrawals`](#queuewithdrawals)
+* [`DelegationManager.completeQueuedWithdrawal`](#completequeuedwithdrawal)
+* [`DelegationManager.completeQueuedWithdrawals`](#completequeuedwithdrawals)
+
+<!-- TODO - explicitly document beacon chain slashing factor edgecase here or in the EPM -->
+
+#### Role of the Withdrawal Delay
+
+TODO
+
+#### Legacy and Post-Slashing Withdrawals
+
+The `DelegationManager` tracks withdrawal-related state in the following mappings:
+
+```solidity
+/// @dev Returns whether a withdrawal is pending for a given `withdrawalRoot`.
+/// @dev This variable will be deprecated in the future, values should only be read or deleted.
+mapping(bytes32 withdrawalRoot => bool pending) public pendingWithdrawals;
+
+/// @notice Returns the total number of withdrawals that have been queued for a given `staker`.
+/// @dev This only increments (doesn't decrement), and is used to help ensure that otherwise identical withdrawals have unique hashes.
+mapping(address staker => uint256 totalQueued) public cumulativeWithdrawalsQueued;
+
+/// @notice Returns a list of queued withdrawals for a given `staker`.
+/// @dev Entries are removed when the withdrawal is completed.
+/// @dev This variable only reflects withdrawals that were made after the slashing release.
+mapping(address staker => EnumerableSet.Bytes32Set withdrawalRoots) internal _stakerQueuedWithdrawalRoots;
+
+/// @notice Returns the details of a queued withdrawal given by `withdrawalRoot`.
+/// @dev This variable only reflects withdrawals that were made after the slashing release.
+mapping(bytes32 withdrawalRoot => Withdrawal withdrawal) public queuedWithdrawals;
+
+/// @notice Contains history of the total cumulative staker withdrawals for an operator and a given strategy.
+/// Used to calculate burned StrategyManager shares when an operator is slashed.
+/// @dev Stores scaledShares instead of total withdrawn shares to track current slashable shares, dependent on the maxMagnitude
+mapping(address operator => mapping(IStrategy strategy => Snapshots.DefaultZeroHistory)) internal
+    _cumulativeScaledSharesHistory;
+```
+
+Of these mappings, only `pendingWithdrawals` and `cumulativeWithdrawalsQueued`
+
+#### Slashing Factors and Scaling Shares
+
+Throughout the `DelegationManager`, the conversion of a staker's _deposit shares_ into _withdrawable shares_ involves
+
+```solidity
+
+
+/// @notice Returns the scaling factor applied to a `staker` for a given `strategy`
+mapping(address staker => mapping(IStrategy strategy => DepositScalingFactor)) internal _depositScalingFactor;
+```
 
 #### `delegateTo`
 
 ```solidity
+// @notice Struct that bundles together a signature and an expiration time for the signature. Used primarily for stack management.
+struct SignatureWithExpiry {
+    // the signature itself, formatted as a single bytes object
+    bytes signature;
+    // the expiration timestamp (UTC) of the signature
+    uint256 expiry;
+}
+
+/**
+ * @notice Caller delegates their stake to an operator.
+ * @param operator The account (`msg.sender`) is delegating its assets to for use in serving applications built on EigenLayer.
+ * @param approverSignatureAndExpiry (optional) Verifies the operator approves of this delegation
+ * @param approverSalt (optional) A unique single use value tied to an individual signature.
+ * @dev The signature/salt are used ONLY if the operator has configured a delegationApprover.
+ * If they have not, these params can be left empty.
+ */
 function delegateTo(
     address operator, 
     SignatureWithExpiry memory approverSignatureAndExpiry, 
@@ -186,32 +255,24 @@ function delegateTo(
     external
 ```
 
-Allows the caller (a Staker) to delegate their shares to an Operator. Delegation is all-or-nothing: when a Staker delegates to an Operator, they delegate ALL their deposit shares. For each strategy the Staker has deposit shares in, the `DelegationManager` will update the Operator's corresponding delegated share amounts.
+Allows a Staker to delegate their assets to an Operator. Delegation is all-or-nothing: when a Staker delegates to an Operator, they delegate ALL their assets. For each strategy the Staker has deposit shares in, the `DelegationManager` will:
+* Query the staker's deposit shares from the `StrategyManager/EigenPodManager`
+* Get the slashing factor to apply for this `(staker, operator, strategy)` (See TODO concept above)
+* Add the deposit shares to the operator's `operatorShares` directly. _Note_ that the initial delegation to an operator is a special case where deposit shares == withdrawable shares.
+
+update the Operator's corresponding delegated share amounts.
 
 *Effects*:
-* Records the Staker as being delegated to the Operator
-* If the Staker has deposit shares in the `EigenPodManager`, the `DelegationManager` adds this shares amount to the Operator's shares for the beacon chain ETH strategy.
-* For each of the strategies in the `StrategyManager`, if the Staker holds deposit shares in that strategy they are added to the Operator's shares under the corresponding strategy.
-* For each `Strategy` including the beaconChainETHStrategy that increased delegated shares, update the depositScalingFactor for the Staker.
+* Delegates the caller to the `operator`
+    * Tabulates any deposited shares across the `EigenPodManager` and `StrategyManager`, and delegates these shares to the `operator`
+    * For each strategy in which the caller holds assets, updates the caller's `depositScalingFactor` for that strategy
 
 *Requirements*:
 * The caller MUST NOT already be delegated to an Operator
 * The `operator` MUST already be an Operator
 * If the `operator` has a `delegationApprover`, the caller MUST provide a valid `approverSignatureAndExpiry` and `approverSalt`
 * Pause status MUST NOT be set: `PAUSED_NEW_DELEGATION`
-* `slashingFactor` for the strategy MUST be non-zero
-
----
-
-### Undelegating and Withdrawing
-
-These methods can be called by both Stakers AND Operators, and are used to (i) undelegate a Staker from an Operator, (ii) queue a withdrawal of a Staker/Operator's shares, or (iii) complete a queued withdrawal:
-
-* [`DelegationManager.undelegate`](#undelegate)
-* [`DelegationManager.redelegate`](#redelegate)
-* [`DelegationManager.queueWithdrawals`](#queuewithdrawals)
-* [`DelegationManager.completeQueuedWithdrawal`](#completequeuedwithdrawal)
-* [`DelegationManager.completeQueuedWithdrawals`](#completequeuedwithdrawals)
+* For each strategy in which the staker holds assets, the `slashingFactor` for that strategy MUST be non-zero.
 
 #### `undelegate`
 
@@ -375,7 +436,7 @@ This method is the plural version of [`completeQueuedWithdrawal`](#completequeue
 
 ---
 
-### Accounting
+## Slashing and Accounting
 
 These methods are called by the `StrategyManager` and `EigenPodManager` to update delegated share accounting when a Staker's balance changes (e.g. due to a deposit):
 
@@ -432,54 +493,3 @@ Called by the `EigenPodManager` when a Staker's shares decrease. This method is 
 
 *Requirements*:
 * Caller MUST be either the `StrategyManager` or `EigenPodManager` (although the `StrategyManager` doesn't use this method)
-
----
-
-### Slashing
-
----
-
-### System Configuration
-
-* [`DelegationManager.setMinWithdrawalDelayBlocks`](#setminwithdrawaldelayblocks)
-* [`DelegationManager.setStrategyWithdrawalDelayBlocks`](#setstrategywithdrawaldelayblocks)
-
-#### `setMinWithdrawalDelayBlocks`
-
-```solidity
-function setMinWithdrawalDelayBlocks(
-    uint256 newMinWithdrawalDelayBlocks
-) 
-    external 
-    onlyOwner
-```
-
-Allows the Owner to set the overall minimum withdrawal delay for withdrawals concerning any strategy. The total time required for a withdrawal to be completable is at least `minWithdrawalDelayBlocks`. If any of the withdrawal's strategies have a higher per-strategy withdrawal delay, the time required is the maximum of these per-strategy delays.
-
-*Effects*:
-* Sets the global `minWithdrawalDelayBlocks`
-
-*Requirements*:
-* Caller MUST be the Owner
-* The new value MUST NOT be greater than `MAX_WITHDRAWAL_DELAY_BLOCKS`
-
-#### `setStrategyWithdrawalDelayBlocks`
-
-```solidity
-function setStrategyWithdrawalDelayBlocks(
-    IStrategy[] calldata strategies,
-    uint256[] calldata withdrawalDelayBlocks
-) 
-    external 
-    onlyOwner
-```
-
-Allows the Owner to set a per-strategy withdrawal delay for each passed-in strategy. The total time required for a withdrawal to be completable is at least `minWithdrawalDelayBlocks`. If any of the withdrawal's strategies have a higher per-strategy withdrawal delay, the time required is the maximum of these per-strategy delays.
-
-*Effects*:
-* For each `strategy`, sets `strategyWithdrawalDelayBlocks[strategy]` to a new value
-
-*Requirements*:
-* Caller MUST be the Owner
-* `strategies.length` MUST be equal to `withdrawalDelayBlocks.length`
-* For each entry in `withdrawalDelayBlocks`, the value MUST NOT be greater than `MAX_WITHDRAWAL_DELAY_BLOCKS`
